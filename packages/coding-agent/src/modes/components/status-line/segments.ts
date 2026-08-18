@@ -4,6 +4,7 @@ import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { SPINNER_ADVANCE_MS, TERMINAL } from "@oh-my-pi/pi-tui";
 import { formatDuration, formatNumber, getProjectDir, pathIsWithin, relativePathWithinRoot } from "@oh-my-pi/pi-utils";
 import { type Theme, type ThemeColor, theme } from "../../../modes/theme/theme";
+import { isOmaBuild } from "../../../oma-identity";
 import { shortenPath, TRUNCATE_LENGTHS, truncateToWidth } from "../../../tools/render-utils";
 import { fileHyperlink } from "../../../tui/hyperlink";
 import { getSessionAccentAnsi, getSessionAccentHex } from "../../../utils/session-color";
@@ -150,16 +151,21 @@ const piSegment: StatusLineSegment = {
 				visible: true,
 			};
 		}
+		// OMA build appends "A" to the brand (π → πA) so a stock `omp` and an
+		// `oma` running side by side are distinguishable at a glance from this
+		// fixed spot. Falls back to a bare "π" if the active theme hides the icon.
+		const oma = isOmaBuild();
 		// Brand fg fades between dim gray (idle) and the accent (working) across
 		// turn edges; the component samples the tween into `brandFgAnsi`.
 		const fgAnsi = ctx.brandFgAnsi ?? theme.getFgAnsi("dim");
+		const inactiveIcon = theme.icon.omp || (oma ? "π" : "");
 		// While a turn runs the brand icon becomes a braille spinner plus a
 		// whole-unit turn timer (port of rust omp's status-band active brand).
 		const content =
 			ctx.turnElapsedMs != null
-				? `${brandSpinnerFrame(ctx.now?.getTime())} ${statusValue(ctx, brandTimer(ctx.turnElapsedMs))} `
-				: theme.icon.omp
-					? `${theme.icon.omp} `
+				? `${brandSpinnerFrame(ctx.now?.getTime())} ${statusValue(ctx, brandTimer(ctx.turnElapsedMs))}${oma ? "A" : ""} `
+				: inactiveIcon
+					? `${inactiveIcon}${oma ? "A" : ""} `
 					: "";
 		return { content: `${fgAnsi}${content}\x1b[39m`, visible: true };
 	},

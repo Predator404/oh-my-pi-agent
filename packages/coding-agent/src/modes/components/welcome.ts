@@ -298,6 +298,7 @@ export class WelcomeComponent implements Component {
 		const leftLines = [
 			"",
 			this.#centerText(theme.bold("Welcome back!"), leftCol),
+			this.#centerText(theme.fg("accent", "persistent agents"), leftCol),
 			"",
 			...logoColored.map(l => this.#centerText(l, leftCol)),
 			"",
@@ -360,6 +361,11 @@ export class WelcomeComponent implements Component {
 
 		// Right column
 		const rightLines = [
+			` ${theme.bold(theme.fg("accent", "Persistent Agents build"))}`,
+			` ${theme.fg("muted", "Fork of OMP · long-running agents")}`,
+			` ${theme.fg("dim", "oma entity setup")}${theme.fg("muted", " — bootstrap")}`,
+			` ${theme.fg("dim", "oma entity spawn <name>")}${theme.fg("muted", " — run one")}`,
+			separator,
 			` ${theme.bold(theme.fg("accent", "Tips"))}`,
 			` ${theme.fg("dim", "#")}${theme.fg("muted", " for prompt actions")}`,
 			` ${theme.fg("dim", "/")}${theme.fg("muted", " for commands")}`,
@@ -386,7 +392,7 @@ export class WelcomeComponent implements Component {
 		const lines: string[] = [];
 
 		// Top border with embedded title
-		const title = ` ${APP_NAME} v${this.version} `;
+		const title = ` ${APP_NAME} v${this.version} · agents `;
 		const titlePrefixRaw = hChar.repeat(3);
 		const titleStyled = theme.fg("dim", titlePrefixRaw) + theme.fg("muted", title);
 		const titleVisLen = visibleWidth(titlePrefixRaw) + visibleWidth(title);
@@ -486,15 +492,17 @@ export class WelcomeComponent implements Component {
 /** Block-grid brand mark shared by the welcome and setup surfaces. */
 export const PI_LOGO = ["████████████", "   ██  ██   ", "   ██  ██   ", "   ▒▒  ██   ", "       ██   "];
 
-/** Multi-stop palette for the diagonal gradient. */
+/** Multi-stop palette for the diagonal gradient — warm faded reds → oranges → yellows. */
 const GRADIENT_STOPS: ReadonlyArray<readonly [number, number, number]> = [
-	[248, 79, 204], // oklch(0.7 0.24 340)
-	[147, 98, 244], // oklch(0.62 0.21 295)
-	[0, 219, 228], // oklch(0.81 0.14 200)
+	[196, 78, 62], // faded brick red
+	[214, 108, 58], // burnt orange
+	[224, 148, 74], // amber
+	[230, 182, 98], // muted gold
+	[236, 208, 138], // pale straw
 ];
 
 /** 256-color ramp fallback when truecolor isn't available. */
-const GRADIENT_RAMP_256 = [206, 170, 134, 99, 69, 74, 44];
+const GRADIENT_RAMP_256 = [131, 167, 173, 179, 180, 215, 222];
 
 /** Half-width of the shine highlight band, expressed in gradient-t units. */
 const SHINE_HALF_WIDTH = 0.18;
