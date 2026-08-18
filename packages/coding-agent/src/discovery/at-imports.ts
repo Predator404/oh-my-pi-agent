@@ -22,6 +22,7 @@
  *
  * @see https://docs.claude.com/en/docs/claude-code/memory#import-additional-files
  */
+import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { logger } from "@oh-my-pi/pi-utils";
@@ -53,6 +54,13 @@ export interface ExpandAtImportsOptions {
 	maxDepth?: number;
 	/** Override the home directory used to resolve `~/...` (default: `os.homedir()`). */
 	home?: string;
+	/**
+	 * Filesystem-resolved containment root (Agent Plugin §4.1). When set, any
+	 * import whose canonical (realpath) target resolves outside this root is left
+	 * verbatim — never inlined — so `@`-import expansion cannot exfiltrate files
+	 * from outside a plugin package. Unresolvable targets fail closed (verbatim).
+	 */
+	containRoot?: string;
 }
 
 /**
@@ -68,9 +76,10 @@ export async function expandAtImports(
 ): Promise<string> {
 	const maxDepth = options.maxDepth ?? MAX_AT_IMPORT_DEPTH;
 	const home = options.home ?? os.homedir();
+	const containRoot = options.containRoot ? path.resolve(options.containRoot) : undefined;
 	const absoluteSource = path.resolve(filePath);
 	const visited = new Set<string>([absoluteSource]);
-	return await expand(content, path.dirname(absoluteSource), 0, maxDepth, home, visited);
+	return await expand(content, path.dirname(absoluteSource), 0, maxDepth, home, containRoot, visited);
 }
 
 async function expand(
@@ -79,6 +88,7 @@ async function expand(
 	depth: number,
 	maxDepth: number,
 	home: string,
+	containRoot: string | undefined,
 	visited: Set<string>,
 ): Promise<string> {
 	if (depth >= maxDepth) return content;
@@ -90,7 +100,7 @@ async function expand(
 			out.push(segment.text);
 			continue;
 		}
-		out.push(await expandTextSegment(segment.text, baseDir, depth, maxDepth, home, visited));
+		out.push(await expandTextSegment(segment.text, baseDir, depth, maxDepth, home, containRoot, visited));
 	}
 	return out.join("");
 }
@@ -101,11 +111,12 @@ async function expandTextSegment(
 	depth: number,
 	maxDepth: number,
 	home: string,
+	containRoot: string | undefined,
 	visited: Set<string>,
 ): Promise<string> {
 	const lines = text.split("\n");
 	for (let i = 0; i < lines.length; i++) {
-		lines[i] = await expandLine(lines[i], baseDir, depth, maxDepth, home, visited);
+		lines[i] = await expandLine(lines[i], baseDir, depth, maxDepth, home, containRoot, visited);
 	}
 	return lines.join("\n");
 }
@@ -116,6 +127,7 @@ async function expandLine(
 	depth: number,
 	maxDepth: number,
 	home: string,
+	containRoot: string | undefined,
 	visited: Set<string>,
 ): Promise<string> {
 	if (!line.includes("@")) return line;
@@ -144,7 +156,7 @@ async function expandLine(
 	let cursor = 0;
 	for (const m of matches) {
 		parts.push(line.slice(cursor, m.start));
-		const expanded = await resolveAndExpand(m.importPath, baseDir, depth, maxDepth, home, visited);
+		const expanded = await resolveAndExpand(m.importPath, baseDir, depth, maxDepth, home, containRoot, visited);
 		parts.push(expanded ?? line.slice(m.start, m.end));
 		cursor = m.end;
 	}
@@ -158,11 +170,20 @@ async function resolveAndExpand(
 	depth: number,
 	maxDepth: number,
 	home: string,
+	containRoot: string | undefined,
 	visited: Set<string>,
 ): Promise<string | null> {
 	const resolved = resolveImportPath(importPath, baseDir, home);
 	if (visited.has(resolved)) {
 		logger.debug("@-import: skipping cyclic include", { path: resolved });
+		return null;
+	}
+
+	// Agent Plugin §4.1 containment: when the importing file is packaged in a
+	// plugin root, an import whose canonical target escapes that root is left
+	// verbatim — expansion must never inline a file from outside the package.
+	if (containRoot !== undefined && !(await isWithinContainRoot(resolved, containRoot))) {
+		logger.debug("@-import: skipping import outside contain root", { path: resolved, containRoot });
 		return null;
 	}
 
@@ -175,7 +196,20 @@ async function resolveAndExpand(
 	// Visited is shared across the whole expansion tree to break cycles,
 	// even cycles that span multiple importing files.
 	visited.add(resolved);
-	return await expand(content, path.dirname(resolved), depth + 1, maxDepth, home, visited);
+	return await expand(content, path.dirname(resolved), depth + 1, maxDepth, home, containRoot, visited);
+}
+
+/**
+ * True when `targetPath`'s canonical (realpath) location is inside `containRoot`
+ * (itself realpath-resolved). A missing/unresolvable target fails closed.
+ */
+async function isWithinContainRoot(targetPath: string, containRoot: string): Promise<boolean> {
+	try {
+		const [realTarget, realRoot] = await Promise.all([fsp.realpath(targetPath), fsp.realpath(containRoot)]);
+		return realTarget === realRoot || realTarget.startsWith(realRoot + path.sep);
+	} catch {
+		return false;
+	}
 }
 
 function resolveImportPath(importPath: string, baseDir: string, home: string): string {

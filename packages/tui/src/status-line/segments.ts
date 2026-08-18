@@ -30,6 +30,17 @@ export type { SegmentContext } from "./types";
 
 const STARTUP_PLACEHOLDER = "…";
 
+/**
+ * True when running as the OMA (persistent multi-entity agent) build. Checked
+ * via env var rather than importing coding-agent's `oma-identity` module —
+ * this package sits below coding-agent in the dependency graph, and the
+ * `OMA_BUILD` marker (set by the `oma.ts` bin shim) is designed to be read
+ * this way from anywhere without threading identity through every call.
+ */
+function isOmaBuild(): boolean {
+	return process.env.OMA_BUILD === "1";
+}
+
 function withIcon(icon: string, text: string): string {
 	return icon ? `${icon} ${text}` : text;
 }
@@ -164,18 +175,23 @@ const piSegment: StatusLineSegment = {
 				visible: true,
 			};
 		}
+		// OMA build appends "A" to the brand (π → πA) so a stock `omp` and an
+		// `oma` running side by side are distinguishable at a glance from this
+		// fixed spot. Falls back to a bare "π" if the active theme hides the icon.
+		const oma = isOmaBuild();
 		// Brand fg fades between dim gray (idle) and the accent (working) across
 		// turn edges; the component samples the tween into `brandFgAnsi`.
 		const fgAnsi = ctx.brandFgAnsi ?? theme.getFgAnsi("dim");
+		const inactiveIcon = theme.icon.omp || (oma ? "π" : "");
 		// While a turn runs the brand icon becomes a braille spinner plus a
 		// whole-unit turn timer (port of rust omp's status-band active brand).
 		// No trailing pad: the group renderer owns inter-segment spacing, so a
 		// trailing space here would double the gap at the first separator (#11103).
 		const content =
 			ctx.turnElapsedMs != null
-				? `${brandSpinnerFrame(ctx.now?.getTime())} ${statusValue(ctx, brandTimer(ctx.turnElapsedMs))}`
-				: theme.icon.omp
-					? theme.icon.omp
+				? `${brandSpinnerFrame(ctx.now?.getTime())} ${statusValue(ctx, brandTimer(ctx.turnElapsedMs))}${oma ? "A" : ""}`
+				: inactiveIcon
+					? `${inactiveIcon}${oma ? "A" : ""}`
 					: "";
 		return { content: `${fgAnsi}${content}\x1b[39m`, visible: true };
 	},
