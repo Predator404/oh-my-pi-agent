@@ -32,6 +32,7 @@ import { installProfileAlias, resolveProfileAliasCommandFromProcess } from "./cl
 import { extractProfileFlags } from "./cli/profile-bootstrap";
 import { startJsEvalProcess } from "./eval/js/process-entry";
 import type { WorkerInbound as JsWorkerInbound, WorkerOutbound as JsWorkerOutbound } from "./eval/js/worker-protocol";
+import { AGENT_WORKER_ARG } from "./launch/agents/worker-transport";
 import { DAEMON_BROKER_WORKER_ARG } from "./launch/protocol";
 import { TERMINAL_OUTPUT_WORKER_ARG } from "./launch/terminal-output-worker-protocol";
 import { LSP_MUX_WORKER_ARG } from "./lsp/mux/protocol";
@@ -50,13 +51,27 @@ if (Bun.semver.order(Bun.version, MIN_BUN_VERSION) < 0) {
 
 setProcessName(APP_NAME);
 
-// `Bun.build`-API compiled Windows executables report `import.meta.main ===
-// false`: the standalone loader keys the entry module with native backslashes
-// (`B:\~BUN\root\cli.js`) but registers the main path with forward slashes
-// (`B:/~BUN/root/cli.js`), so Bun's internal match fails. `bun build --compile`
-// CLI builds are unaffected. A compiled binary's entry module is by definition
-// the process entry, so the define-folded PI_COMPILED marker stands in.
-const isProcessEntry = import.meta.main || process.env.PI_COMPILED === "true";
+// Whether this module is the program's entry point. `import.meta.main` covers
+// the common case; Bun reports it falsely as `false` for (a) Windows
+// `bun build --compile` entries (the standalone loader keys the module with
+// native backslashes — `B:\~BUN\root\cli.js` — but registers the main path
+// with forward slashes, so Bun's internal match fails) and (b) any worker
+// thread/process that re-enters the program via `Bun.main`. Both are the
+// *entry* module, so fall back to a basename comparison against `Bun.main`.
+// An imported module — a test/SDK harness, or a sibling bin shim like
+// `oma.ts` importing this file — has a different basename and is correctly
+// not treated as the entry (so it neither auto-runs nor claims the worker host).
+function moduleIsProcessEntry(): boolean {
+	if (import.meta.main) return true;
+	const selfPath = import.meta.path;
+	if (!selfPath) return false;
+	const basename = (p: string): string => {
+		const forward = p.replace(/\\/g, "/");
+		return forward.slice(forward.lastIndexOf("/") + 1).replace(/\.(ts|js|mjs|cjs)$/, "");
+	};
+	return basename(Bun.main) === basename(selfPath);
+}
+const isProcessEntry = moduleIsProcessEntry();
 
 function formatLicenseOutput(): string {
 	return `OMP License and Third-Party Notices\n\n${rootLicense.trimEnd()}\n\n${thirdPartyNotices.trimEnd()}\n`;
@@ -226,6 +241,12 @@ async function runWorkerEntrypoint(arg: string | undefined): Promise<boolean> {
 		await startDaemonBrokerFromEnvironment();
 		return true;
 	}
+	if (arg === AGENT_WORKER_ARG) {
+		// Resident agent-session worker: dispatch before the normal command graph loads.
+		const { startAgentWorkerFromEnvironment } = await import("./launch/agents/agent-worker-main");
+		await startAgentWorkerFromEnvironment();
+		return true;
+	}
 	if (arg === LSP_MUX_WORKER_ARG) {
 		const { startLspMuxFromEnvironment } = await import("./lsp/mux/server");
 		await startLspMuxFromEnvironment();
@@ -340,7 +361,13 @@ async function runTinyWorker(): Promise<void> {
 }
 
 /** Run the CLI with the given argv (no `process.argv` prefix). */
-export async function runCli(argv: string[]): Promise<void> {
+export async function runCli(
+	argv: string[],
+	options?: { isProcessEntry?: boolean; appName?: string; version?: string },
+): Promise<void> {
+	const processEntry = options?.isProcessEntry ?? isProcessEntry;
+	const binName = options?.appName ?? APP_NAME;
+	const binVersion = options?.version ?? VERSION;
 	let resolvedArgv = argv;
 	try {
 		const extracted = extractProfileFlags(resolvedArgv);
@@ -405,7 +432,7 @@ export async function runCli(argv: string[]): Promise<void> {
 	// SDK embedding) have `import.meta.main === false` — declaring there would
 	// poison `workerHostEntry()` for the whole test process, forcing eval/stats/
 	// browser workers onto the same-realm inline fallback.
-	if (isProcessEntry) declareWorkerHostEntry();
+	if (processEntry) declareWorkerHostEntry();
 
 	if (resolvedArgv[0] === "--smoke-test") {
 		await runSmokeTest();
@@ -426,7 +453,7 @@ export async function runCli(argv: string[]): Promise<void> {
 		// keeps the TUI graph out of worker, subcommand, help, and version launches.
 		// Loading it statically would erase the measured cold-start improvement.
 		const { beginStartupComposer, stopPendingStartupComposer } = await import("./modes/startup-composer");
-		beginStartupComposer({ version: VERSION });
+		beginStartupComposer({ version: binVersion });
 		stopStartupComposer = stopPendingStartupComposer;
 	}
 
@@ -443,7 +470,7 @@ export async function runCli(argv: string[]): Promise<void> {
 			process.exitCode = 1;
 			return;
 		}
-		await run({ bin: APP_NAME, version: VERSION, argv: resolved.argv, commands, metadataHelp: showHelp });
+		await run({ bin: binName, version: binVersion, argv: resolved.argv, commands, metadataHelp: showHelp });
 	} finally {
 		stopStartupComposer?.();
 	}
@@ -454,10 +481,10 @@ export async function runCli(argv: string[]): Promise<void> {
 // The catch mirrors what an unhandled TLA rejection produced: error dump to
 // stderr, exit code 1. Success paths resolve without touching the exit code.
 // Guarded so importing `runCli` (profile CLI tests, SDK embedding) does not
-// launch the agent as a side effect. Worker threads re-enter this module as
-// their entry with `import.meta.main === false`, so the worker-host dispatch
-// is admitted via `!Bun.isMainThread`.
-if (isProcessEntry || !Bun.isMainThread) {
+// launch the agent as a side effect. `moduleIsProcessEntry()` also matches the
+// worker thread/process case (which re-enters `Bun.main` with
+// `import.meta.main === false`) by basename, so worker dispatch still runs here.
+if (isProcessEntry) {
 	runCli(process.argv.slice(2)).catch((err: unknown) => {
 		process.stderr.write(`${Bun.inspect(err, { colors: process.stderr.isTTY === true })}\n`);
 		process.exit(1);
