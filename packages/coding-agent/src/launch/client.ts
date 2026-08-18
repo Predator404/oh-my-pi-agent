@@ -4,12 +4,14 @@ import * as path from "node:path";
 import { IpcConnection } from "@oh-my-pi/pi-natives";
 import { getGlobalDaemonRuntimeDir, isEexist, isEnoent, logger, postmortem, toError } from "@oh-my-pi/pi-utils";
 import { resolveWorkerSpawnCmd, workerEnvFromParent } from "../subprocess/worker-client";
+import type { AgentControlEventEnvelope } from "./agents/control-protocol";
 import { canonicalProjectDir, daemonBrokerEndpoint, daemonRuntimeDir } from "./paths";
 import {
 	DAEMON_BROKER_WORKER_ARG,
 	DAEMON_IDLE_GRACE_ENV,
 	DAEMON_PROJECT_DIR_ENV,
 	DAEMON_RUNTIME_DIR_ENV,
+	type DaemonAgentEventNotification,
 	type DaemonCompletionNotification,
 	type DaemonOperation,
 	type DaemonRpcResult,
@@ -57,6 +59,8 @@ export interface DaemonBrokerClient {
 		owner: string,
 		sink: (notification: DaemonCompletionNotification) => Promise<void> | void,
 	): (options?: DaemonCompletionUnregisterOptions) => void;
+	/** Subscribe to a resident session's agent event stream. Absent on legacy brokers. */
+	onAgentEvent?(owner: string, sink: (envelope: AgentControlEventEnvelope) => void): () => void;
 	/** Canonical project directory or synthetic directory identifying a global scope. */
 	readonly projectDir: string;
 	request(operation: DaemonOperation, signal?: AbortSignal): Promise<DaemonRpcResult>;
@@ -120,6 +124,7 @@ class SocketDaemonClient implements DaemonBrokerClient {
 	readonly #idleGraceMs: number | undefined;
 	readonly #pending = new Map<string, PendingRequest>();
 	readonly #completionSinks = new Map<string, (notification: DaemonCompletionNotification) => Promise<void> | void>();
+	readonly #agentEventSinks = new Map<string, (envelope: AgentControlEventEnvelope) => void>();
 	readonly #completionUnsubscribes = new Set<string>();
 	readonly #preservedCompletionOwners = new Set<string>();
 	readonly #completionReplays = new Set<string>();
@@ -208,6 +213,7 @@ class SocketDaemonClient implements DaemonBrokerClient {
 		this.#completionReconnectTimer = undefined;
 		this.#socket?.destroy();
 		this.#completionSinks.clear();
+		this.#agentEventSinks.clear();
 		this.#preservedCompletionOwners.clear();
 		this.#completionReplays.clear();
 		this.#socket = undefined;
@@ -351,7 +357,7 @@ class SocketDaemonClient implements DaemonBrokerClient {
 				typeof decoded === "object" &&
 				decoded !== null &&
 				"event" in decoded &&
-				decoded.event === "daemon-completed"
+				(decoded.event === "daemon-completed" || decoded.event === "agent-event")
 			) {
 				logger.warn("Ignoring malformed daemon completion", { error: parseError.message });
 				return;
@@ -360,7 +366,8 @@ class SocketDaemonClient implements DaemonBrokerClient {
 			return;
 		}
 		if ("event" in message) {
-			void this.#deliverCompletion(message);
+			if (message.event === "agent-event") this.#deliverAgentEvent(message);
+			else void this.#deliverCompletion(message);
 			return;
 		}
 		const response = message;
@@ -378,6 +385,18 @@ class SocketDaemonClient implements DaemonBrokerClient {
 		} catch (error) {
 			pending.reject(toError(error));
 		}
+	}
+
+	onAgentEvent(owner: string, sink: (envelope: AgentControlEventEnvelope) => void): () => void {
+		this.#agentEventSinks.set(owner, sink);
+		return () => {
+			if (this.#agentEventSinks.get(owner) === sink) this.#agentEventSinks.delete(owner);
+		};
+	}
+
+	#deliverAgentEvent(message: DaemonAgentEventNotification): void {
+		const sink = this.#agentEventSinks.get(message.owner);
+		sink?.(message.envelope);
 	}
 
 	async #deliverCompletion(message: DaemonCompletionNotification): Promise<void> {

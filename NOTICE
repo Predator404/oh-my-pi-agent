@@ -1,0 +1,20 @@
+Oh My Pi
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+
+This product includes software adapted from Prime Agent
+(https://github.com/PrimeIntellect-ai/prime-agent), licensed under the MIT
+License:
+
+    Copyright (c) 2025 Mario Zechner
+    Copyright (c) 2026 Prime Intellect
+
+The persistent multi-entity agent daemon subsystem under
+`packages/coding-agent/src/launch/agents/` is adapted from Prime Agent's daemon,
+scheduler, goal, autonomous, session-lease, and worker-transport modules. The
+ipython/RLM execution model of Prime Agent is NOT included; the port targets Oh
+My Pi's discrete-tool AgentSession. Adapted files carry an attribution header
+referencing this notice.
+
+Both projects share Mario Zechner's upstream `pi` root and are distributed under
+the MIT License.

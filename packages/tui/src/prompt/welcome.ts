@@ -11,7 +11,7 @@ import { isHyperlinkEnabled, urlHyperlink, urlLinkSpan } from "../render/hyperli
 import { TERMINAL } from "../terminal-capabilities";
 import { theme } from "../theme/theme";
 import type { Component } from "../tui";
-import { padding, replaceTabs, visibleWidth, wrapTextWithAnsi } from "../utils";
+import { padding, replaceTabs, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils";
 import tipsText from "./tips.txt" with { type: "text" };
 
 /** Leading marker for a tip that pitches Tern: shown only while no TSP surface
@@ -189,11 +189,32 @@ export function renderWelcomeTip(tip: string, width: number, phase = 0): string[
 }
 
 /**
- * The session's welcome banner. In a terminal: the gradient logo beside the
- * `omp` wordmark with the version under it (the logo alone when the lockup does
- * not fit) and the tip of the session (dropped below {@link TIP_MIN_COLUMNS}
- * columns). Natively: a card with the same logo, wordmark, version and tip
- * ({@link WelcomeComponent.describe}).
+ * Fixed number of recent-session rows in the welcome box; overflow is sliced so
+ * the box height stays constant across recent-session updates.
+ */
+export const WELCOME_SESSION_SLOTS = 4;
+
+/**
+ * Fixed number of LSP-server rows, for the same reason. Overflow is sliced so
+ * the box height is constant regardless of how many servers a project has.
+ */
+export const WELCOME_LSP_SLOTS = 4;
+
+export interface RecentSession {
+	name: string;
+	timeAgo: string;
+}
+
+export interface LspServerInfo {
+	name: string;
+	status: "ready" | "error" | "connecting" | "available";
+	fileTypes: string[];
+}
+
+/**
+ * The session's welcome banner. In a terminal: the OMA welcome box — the
+ * gradient logo, model/provider and persistent-agent branding, recent sessions
+ * and LSP servers. Natively: the omp lockup card ({@link WelcomeComponent.describe}).
  */
 export class WelcomeComponent implements Component {
 	#animStart: number | null = null;
@@ -213,7 +234,13 @@ export class WelcomeComponent implements Component {
 	#cachedLines: string[] | undefined;
 	#native: { tip: string | undefined; node: NativeNode } | undefined;
 
-	constructor(private version: string) {}
+	constructor(
+		private version: string,
+		private modelName: string,
+		private providerName: string,
+		private recentSessions: RecentSession[] = [],
+		private lspServers: LspServerInfo[] = [],
+	) {}
 	get tip(): string | undefined {
 		this.#nagRoll ??= Math.random();
 		this.#tipRoll ??= Math.random();
@@ -322,6 +349,22 @@ export class WelcomeComponent implements Component {
 		this.invalidate();
 	}
 
+	setModel(modelName: string, providerName: string): void {
+		this.modelName = modelName;
+		this.providerName = providerName;
+		this.invalidate();
+	}
+
+	setRecentSessions(sessions: RecentSession[]): void {
+		this.recentSessions = sessions;
+		this.invalidate();
+	}
+
+	setLspServers(servers: LspServerInfo[]): void {
+		this.lspServers = servers;
+		this.invalidate();
+	}
+
 	render(termWidth: number): readonly string[] {
 		const animating = this.#animStart != null;
 		if (!animating && this.#cachedLines && this.#cachedWidth === termWidth) {
@@ -339,16 +382,166 @@ export class WelcomeComponent implements Component {
 	}
 
 	#renderLines(termWidth: number): string[] {
-		// Content keeps a column clear on each side; everything centers in the full width.
-		const room = termWidth - 2;
-		if (room < 4) return [];
-		const logo = this.#currentLogoFrame();
-		const version = theme.fg("dim", `v${this.version}`);
-		const lockupWidth = LOGO_WIDTH + LOCKUP_GAP + Math.max(WORDMARK_WIDTH, visibleWidth(version));
-		const art = room >= lockupWidth ? lockup(logo, version) : room >= LOGO_WIDTH ? logo : [];
-		const lines = centerBlock(art, termWidth);
-		const tip = termWidth >= TIP_MIN_COLUMNS ? this.#renderTip(room) : [];
-		if (tip.length > 0) lines.push("", ...tip.flatMap(line => centerBlock([line], termWidth)));
+		// Box dimensions - responsive with max width and small-terminal support
+		const maxWidth = 100;
+		const boxWidth = Math.min(maxWidth, Math.max(0, termWidth - 2));
+		if (boxWidth < 4) {
+			return [];
+		}
+		const dualContentWidth = boxWidth - 3; // 3 = │ + │ + │
+		const preferredLeftCol = 26;
+		const minLeftCol = 12; // logo width
+		const minRightCol = 20;
+		// Dynamic model/provider labels are truncated inside the fixed column.
+		// Letting them influence the responsive breakpoint changes the box height
+		// when authoritative session data replaces the empty prepaint labels.
+		const leftMinContentWidth = Math.max(minLeftCol, visibleWidth("Welcome back!"));
+		const desiredLeftCol = Math.max(
+			Math.min(preferredLeftCol, Math.max(minLeftCol, Math.floor(dualContentWidth * 0.35))),
+			leftMinContentWidth,
+		);
+		const dualLeftCol =
+			dualContentWidth >= minRightCol + 1
+				? Math.min(desiredLeftCol, dualContentWidth - minRightCol)
+				: Math.max(1, dualContentWidth - 1);
+		const dualRightCol = Math.max(1, dualContentWidth - dualLeftCol);
+		const showRightColumn = dualLeftCol >= leftMinContentWidth && dualRightCol >= minRightCol;
+		const leftCol = showRightColumn ? dualLeftCol : boxWidth - 2;
+		const rightCol = showRightColumn ? dualRightCol : 0;
+
+		// Logo: pick a frame from the intro animation if active, else the resting frame.
+		const logoColored = this.#currentLogoFrame();
+
+		// Left column - centered content
+		const leftLines = [
+			"",
+			this.#centerText(theme.bold("Welcome back!"), leftCol),
+			this.#centerText(theme.fg("accent", "persistent agents"), leftCol),
+			"",
+			...logoColored.map(l => this.#centerText(l, leftCol)),
+			"",
+			this.#centerText(theme.fg("muted", this.modelName), leftCol),
+			this.#centerText(theme.fg("borderMuted", this.providerName), leftCol),
+		];
+
+		// Right column separator
+		const separatorWidth = Math.max(0, rightCol - 2); // padding on each side
+		const separator = ` ${theme.fg("dim", theme.boxRound.horizontal.repeat(separatorWidth))}`;
+
+		// Recent sessions content
+		const sessionLines: string[] = [];
+		if (this.recentSessions.length === 0) {
+			sessionLines.push(` ${theme.fg("dim", "No recent sessions")}`);
+		} else {
+			// Reserve width for the bullet prefix (" • ") and the trailing " (timeAgo)"
+			// so the relative time is never the part that gets truncated. The name
+			// absorbs whatever space is left.
+			const bulletPrefix = ` ${theme.md.bullet} `;
+			const prefixWidth = visibleWidth(bulletPrefix);
+			for (const session of this.recentSessions.slice(0, WELCOME_SESSION_SLOTS)) {
+				const timeSuffixRaw = ` (${session.timeAgo})`;
+				const timeWidth = visibleWidth(timeSuffixRaw);
+				const nameBudget = Math.max(1, rightCol - prefixWidth - timeWidth);
+				const nameVis = visibleWidth(session.name);
+				const name = nameVis > nameBudget ? truncateToWidth(session.name, nameBudget) : session.name;
+				sessionLines.push(
+					`${theme.fg("dim", bulletPrefix)}${theme.fg("muted", name)}${theme.fg("dim", timeSuffixRaw)}`,
+				);
+			}
+		}
+		// Pad to the fixed slot count so the box height doesn't depend on session count.
+		while (sessionLines.length < WELCOME_SESSION_SLOTS) {
+			sessionLines.push("");
+		}
+
+		// LSP servers content
+		const lspLines: string[] = [];
+		if (this.lspServers.length === 0) {
+			lspLines.push(` ${theme.fg("dim", "No LSP servers")}`);
+		} else {
+			for (const server of this.lspServers.slice(0, WELCOME_LSP_SLOTS)) {
+				const icon =
+					server.status === "ready"
+						? theme.styledSymbol("status.enabled", "success")
+						: server.status === "available"
+							? theme.styledSymbol("status.enabled", "dim")
+							: server.status === "connecting"
+								? theme.styledSymbol("status.pending", "muted")
+								: theme.styledSymbol("status.error", "error");
+				const exts = server.fileTypes.slice(0, 3).join(" ");
+				lspLines.push(` ${icon} ${theme.fg("muted", server.name)} ${theme.fg("dim", exts)}`);
+			}
+		}
+		// Pad to the fixed slot count so the box height doesn't depend on server count.
+		while (lspLines.length < WELCOME_LSP_SLOTS) {
+			lspLines.push("");
+		}
+
+		// Right column
+		const rightLines = [
+			` ${theme.bold(theme.fg("accent", "Persistent Agents build"))}`,
+			` ${theme.fg("muted", "Fork of OMP · long-running agents")}`,
+			` ${theme.fg("dim", "oma entity setup")}${theme.fg("muted", " — bootstrap")}`,
+			` ${theme.fg("dim", "oma entity spawn <name>")}${theme.fg("muted", " — run one")}`,
+			separator,
+			` ${theme.bold(theme.fg("accent", "Tips"))}`,
+			` ${theme.fg("dim", "#")}${theme.fg("muted", " for prompt actions")}`,
+			` ${theme.fg("dim", "/")}${theme.fg("muted", " for commands")}`,
+			` ${theme.fg("dim", "!")}${theme.fg("muted", " to run bash")}`,
+			` ${theme.fg("dim", "$")}${theme.fg("muted", " to run python")}`,
+			separator,
+			` ${theme.bold(theme.fg("accent", "LSP Servers"))}`,
+			...lspLines,
+			separator,
+			` ${theme.bold(theme.fg("accent", "Recent sessions"))}`,
+			...sessionLines,
+			"",
+		];
+
+		// Border characters (dim)
+		const hChar = theme.boxRound.horizontal;
+		const h = theme.fg("dim", hChar);
+		const v = theme.fg("dim", theme.boxRound.vertical);
+		const tl = theme.fg("dim", theme.boxRound.topLeft);
+		const tr = theme.fg("dim", theme.boxRound.topRight);
+		const bl = theme.fg("dim", theme.boxRound.bottomLeft);
+		const br = theme.fg("dim", theme.boxRound.bottomRight);
+
+		const lines: string[] = [];
+
+		// Top border with embedded title
+		const title = ` ${APP_NAME} v${this.version} · agents `;
+		const titlePrefixRaw = hChar.repeat(3);
+		const titleStyled = theme.fg("dim", titlePrefixRaw) + theme.fg("muted", title);
+		const titleVisLen = visibleWidth(titlePrefixRaw) + visibleWidth(title);
+		const titleSpace = boxWidth - 2;
+		if (titleVisLen >= titleSpace) {
+			lines.push(tl + truncateToWidth(titleStyled, titleSpace) + tr);
+		} else {
+			const afterTitle = titleSpace - titleVisLen;
+			lines.push(tl + titleStyled + theme.fg("dim", hChar.repeat(afterTitle)) + tr);
+		}
+
+		// Content rows
+		const maxRows = showRightColumn ? Math.max(leftLines.length, rightLines.length) : leftLines.length;
+		for (let i = 0; i < maxRows; i++) {
+			const left = this.#fitToWidth(leftLines[i] ?? "", leftCol);
+			if (showRightColumn) {
+				const right = this.#fitToWidth(rightLines[i] ?? "", rightCol);
+				lines.push(v + left + v + right + v);
+			} else {
+				lines.push(v + left + v);
+			}
+		}
+		// Bottom border
+		if (showRightColumn) {
+			lines.push(bl + h.repeat(leftCol) + theme.fg("dim", theme.boxRound.teeUp) + h.repeat(rightCol) + br);
+		} else {
+			lines.push(bl + h.repeat(leftCol) + br);
+		}
+
+		// Randomly picked tip, rendered directly beneath the box.
+		lines.push(...this.#renderTip(boxWidth));
 		return lines;
 	}
 
@@ -373,6 +566,42 @@ export class WelcomeComponent implements Component {
 		const elapsed = performance.now() - this.#animStart;
 		if (elapsed >= INTRO_MS) return REST_FRAME;
 		return introLogoFrame(elapsed / INTRO_MS);
+	}
+
+	/** Center text within a given width */
+	#centerText(text: string, width: number): string {
+		const visLen = visibleWidth(text);
+		if (visLen >= width) {
+			return truncateToWidth(text, width);
+		}
+		const leftPad = Math.floor((width - visLen) / 2);
+		const rightPad = width - visLen - leftPad;
+		return padding(leftPad) + text + padding(rightPad);
+	}
+
+	/** Fit string to exact width with ANSI-aware truncation/padding */
+	#fitToWidth(str: string, width: number): string {
+		const visLen = visibleWidth(str);
+		if (visLen > width) {
+			const ellipsis = "…";
+			const ellipsisWidth = visibleWidth(ellipsis);
+			const maxWidth = Math.max(0, width - ellipsisWidth);
+			let truncated = "";
+			let currentWidth = 0;
+			let inEscape = false;
+			for (const char of str) {
+				if (char === "\x1b") inEscape = true;
+				if (inEscape) {
+					truncated += char;
+					if (char === "m") inEscape = false;
+				} else if (currentWidth < maxWidth) {
+					truncated += char;
+					currentWidth++;
+				}
+			}
+			return `${truncated}${ellipsis}`;
+		}
+		return str + padding(width - visLen);
 	}
 }
 
@@ -448,13 +677,15 @@ function centerBlock(lines: readonly string[], width: number): string[] {
 
 /** Multi-stop palette for the diagonal gradient. */
 const GRADIENT_STOPS: ReadonlyArray<readonly [number, number, number]> = [
-	[248, 79, 204], // oklch(0.7 0.24 340)
-	[147, 98, 244], // oklch(0.62 0.21 295)
-	[0, 219, 228], // oklch(0.81 0.14 200)
+	[196, 78, 62], // faded brick red
+	[214, 108, 58], // burnt orange
+	[224, 148, 74], // amber
+	[230, 182, 98], // muted gold
+	[236, 208, 138], // pale straw
 ];
 
 /** 256-color ramp fallback when truecolor isn't available. */
-const GRADIENT_RAMP_256 = [206, 170, 134, 99, 69, 74, 44];
+const GRADIENT_RAMP_256 = [131, 167, 173, 179, 180, 215, 222];
 
 /** Half-width of the shine highlight band, expressed in gradient-t units. */
 const SHINE_HALF_WIDTH = 0.18;

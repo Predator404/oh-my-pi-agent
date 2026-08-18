@@ -18,6 +18,7 @@ import { skillCapability } from "../capability/skill";
 import type { EffectiveExtensionRoots, SourceMeta } from "../capability/types";
 import type { Settings } from "../config/settings";
 import { cfgDisabledExtensions, cfgSkills, type SkillsSettings } from "./settings";
+import { expandAtImports } from "../discovery/at-imports";
 import {
 	type Skill as CapabilitySkill,
 	isUserSourceEnabled,
@@ -837,12 +838,35 @@ export type SkillInvocationKind = "user" | "autoload";
 /** What the user typed around a skill token: `args` feed the template, `prompt` only the transcript. */
 export type SkillPromptInput = Pick<ParsedSkillInvocation, "args"> & Partial<Pick<ParsedSkillInvocation, "prompt">>;
 
+/**
+ * Frontmatter flag that opts a skill body into native `@`-import expansion at
+ * read time. Only skills that explicitly set `resolveImports: true` participate;
+ * every other skill body is used verbatim. This gate keeps `@`-import expansion
+ * scoped to project-pointer stubs (WS6, SPEC §7.3) instead of silently changing
+ * behavior across the whole skill corpus, and preserves Agent-Plugin isolation.
+ */
+export const SKILL_RESOLVE_IMPORTS_FIELD = "resolveImports";
+
 /** Read a skill's instruction body before rendering user-provided arguments. */
-export async function loadSkillPromptBody(skill: Pick<Skill, "filePath">): Promise<string> {
+export async function loadSkillPromptBody(
+	skill: Pick<Skill, "filePath" | "containRoot">,
+): Promise<string> {
 	const content = await Bun.file(skill.filePath).text();
 	// Only the body is used: keep HTML comments (`repair: false`) and leave YAML
 	// diagnostics to the loader, which already parsed this frontmatter.
-	return parseFrontmatter(content, { source: skill.filePath, repair: false, level: "off" }).body.trim();
+	const { frontmatter, body } = parseFrontmatter(content, { source: skill.filePath, repair: false, level: "off" });
+	const rawBody = body.trim();
+	// Opt-in only: a skill body participates in `@`-import expansion solely when
+	// its frontmatter sets `resolveImports: true` (project-pointer stubs, WS6).
+	// This resolves a stub whose body is `@~/vault/projects/<project>/<persona>.md`
+	// into the referenced vault note through the `~/vault` symlink (SPEC §7.3) at
+	// read time — no content duplicated into the project repo. Even when opted in,
+	// the skill's plugin `containRoot` (when set) is enforced: any import whose
+	// canonical target escapes the plugin package is left verbatim (defense in
+	// depth). Non-file `@tokens` and imports inside code fences stay verbatim too.
+	return frontmatter[SKILL_RESOLVE_IMPORTS_FIELD] === true
+		? (await expandAtImports(rawBody, skill.filePath, { containRoot: skill.containRoot })).trim()
+		: rawBody;
 }
 
 /** A skill's instruction body and the skill it was read from. */

@@ -15,6 +15,10 @@ export const authHelp = {
 	description: "Export or import stored provider credentials (API keys and OAuth logins) as JSON",
 } satisfies CommandMetadata;
 
+export const entityHelp = {
+	description: "Operate persistent multi-entity agents (roster, config, spawn/attach, schedule/goal, setup)",
+} satisfies CommandMetadata;
+
 export const authBrokerHelp = {
 	description: "Manage the omp auth-broker (credential vault)",
 } satisfies CommandMetadata;

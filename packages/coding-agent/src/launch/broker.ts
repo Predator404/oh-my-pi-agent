@@ -21,6 +21,9 @@ import {
 	readStoredDaemonRecord,
 	writeDaemonScopeMeta,
 } from "./paths";
+import { AgentSupervisor, type ClientChannel } from "./agents/agent-supervisor";
+import type { AgentControlEventEnvelope } from "./agents/control-protocol";
+import { SubprocessWorkerSpawner } from "./agents/subprocess-worker-spawner";
 import type { DaemonReadySpec, DaemonSnapshot, DaemonSpec } from "@oh-my-pi/pi-tui/tools/daemon";
 import { hasLiveDaemonProjectPresence, pruneDeadDaemonRuntimeDirs } from "./presence";
 import {
@@ -451,6 +454,10 @@ class DaemonBroker {
 	#server: IpcServer | undefined;
 	#idleTimer: NodeJS.Timeout | undefined;
 	#shuttingDown = false;
+	#agentSupervisor: AgentSupervisor | undefined;
+	#agentSpawner: SubprocessWorkerSpawner | undefined;
+	readonly #agentClients = new Map<IpcConnection, ClientChannel>();
+	#agentClientSeq = 0;
 
 	constructor(
 		projectDir: string,
@@ -479,6 +486,11 @@ class DaemonBroker {
 		if (process.platform !== "win32") this.#watchEndpoint();
 		this.#scheduleIdleShutdown();
 		onListening?.();
+		this.#agentSpawner = new SubprocessWorkerSpawner({ runtimeDir: this.#runtimeDir, projectDir: this.#projectDir });
+		this.#agentSupervisor = new AgentSupervisor({
+			spawner: this.#agentSpawner,
+			journalPath: path.join(this.#runtimeDir, "agent-journal.jsonl"),
+		});
 		await this.#finished.promise;
 	}
 
@@ -501,6 +513,7 @@ class DaemonBroker {
 			await record.persistQueue;
 		}
 		this.#ownerSockets.clear();
+		this.#agentSpawner?.killAll();
 		for (const socket of this.#sockets) socket.destroy();
 		this.#sockets.clear();
 		this.#clients.clear();
@@ -524,6 +537,11 @@ class DaemonBroker {
 			},
 			() => {
 				this.#sockets.delete(socket);
+				const agentChannel = this.#agentClients.get(socket);
+				if (agentChannel) {
+					this.#agentClients.delete(socket);
+					this.#agentSupervisor?.detachClient(agentChannel.id);
+				}
 				if (!authenticated) return;
 				this.#clients.delete(socket);
 				this.#scheduleIdleShutdown();
@@ -682,9 +700,30 @@ class DaemonBroker {
 				await this.#refreshDetached(record);
 				return { op: "describe", daemon: record.snapshot, spec: record.spec };
 			}
+			case "agent": {
+				if (!this.#agentSupervisor) throw new Error("agent supervisor unavailable");
+				const response = await this.#agentSupervisor.handle(operation.envelope, this.#agentClientFor(socket));
+				return { op: "agent", response };
+			}
 			case "shutdown":
 				return { op: "shutdown" };
 		}
+	}
+
+	#agentClientFor(socket: IpcConnection): ClientChannel {
+		const existing = this.#agentClients.get(socket);
+		if (existing) return existing;
+		const channel: ClientChannel = {
+			id: `agent-client-${++this.#agentClientSeq}`,
+			capabilities: ["attach_snapshot", "event_sequence"],
+			sendEvent: (envelope: AgentControlEventEnvelope) => {
+				if (socket.closed) return;
+				const notification = { event: "agent-event" as const, owner: envelope.activeSessionId, envelope };
+				socket.send(JSON.stringify(notification));
+			},
+		};
+		this.#agentClients.set(socket, channel);
+		return channel;
 	}
 
 	async #start(spec: DaemonSpec, owner?: string, replace = false, awaitReady = true): Promise<DaemonRpcResult> {
@@ -1477,7 +1516,9 @@ class DaemonBroker {
 						if ("pendingCompletions" in decoded && Array.isArray(decoded.pendingCompletions)) {
 							return decoded.pendingCompletions.map(value => {
 								const message = parseDaemonWireMessage(value);
-								if (!("event" in message)) throw new Error("Pending daemon completion is not an event");
+								if (!("event" in message) || message.event !== "daemon-completed") {
+									throw new Error("Pending daemon completion is not an event");
+								}
 								return message;
 							});
 						}

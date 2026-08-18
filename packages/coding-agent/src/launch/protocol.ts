@@ -6,6 +6,16 @@ import {
 	type DaemonSpec,
 	type DaemonSnapshot,
 } from "@oh-my-pi/pi-tui/tools/daemon";
+import type {
+	AgentControlCommandEnvelope,
+	AgentControlEventEnvelope,
+	AgentControlResult,
+} from "./agents/control-protocol";
+import {
+	isAgentControlCommandEnvelope,
+	isAgentControlEventEnvelope,
+	isAgentControlResult,
+} from "./agents/control-protocol";
 /**
  * Cross-process daemon broker protocol shared by the tool, client, and broker.
  */
@@ -65,6 +75,12 @@ export type DaemonOperation =
 	| { op: "describe"; name: string }
 	/** Abort this connection's in-flight `wait`/follow-`logs` request `requestId`. Legacy brokers reject it. */
 	| { op: "cancel"; requestId: string }
+	/**
+	 * Resident agent-session control (C4). Carries a full agent command envelope;
+	 * the broker routes it to the {@link AgentSupervisor}. This is how OMP's
+	 * DaemonOperation is extended with the agent-session command set.
+	 */
+	| { op: "agent"; envelope: AgentControlCommandEnvelope }
 	| { op: "shutdown" };
 
 /** Typed broker result decoded before it reaches tool code. */
@@ -91,6 +107,7 @@ export type DaemonRpcResult =
 	| { op: "mode"; daemon: DaemonSnapshot }
 	| { op: "describe"; daemon: DaemonSnapshot; spec: DaemonSpec }
 	| { op: "cancel"; cancelled: boolean }
+	| { op: "agent"; response: AgentControlResult }
 	| { op: "shutdown" };
 
 /** Authenticated request envelope used by socket clients. */
@@ -118,7 +135,14 @@ export interface DaemonCompletionNotification {
 	daemon: DaemonSnapshot;
 }
 
-export type DaemonWireMessage = DaemonWireResponse | DaemonCompletionNotification;
+/** Unsolicited agent-session event pushed to a socket attached to that session. */
+export interface DaemonAgentEventNotification {
+	event: "agent-event";
+	owner: string;
+	envelope: AgentControlEventEnvelope;
+}
+
+export type DaemonWireMessage = DaemonWireResponse | DaemonCompletionNotification | DaemonAgentEventNotification;
 
 function record(value: unknown, label: string): Record<string, unknown> {
 	if (!isRecord(value)) throw new Error(`${label} must be an object`);
@@ -306,6 +330,11 @@ export function parseDaemonWireMessage(value: unknown): DaemonWireMessage {
 			daemon: parseDaemonSnapshot(source.daemon),
 		};
 	}
+	if (source.event === "agent-event") {
+		if (!isAgentControlEventEnvelope(source.envelope))
+			throw new Error("agent-event.envelope is not an event envelope");
+		return { event: "agent-event", owner: stringValue(source.owner, "agent-event.owner"), envelope: source.envelope };
+	}
 	return parseDaemonWireResponse(value);
 }
 
@@ -377,6 +406,10 @@ function parseDaemonOperation(value: unknown): DaemonOperation {
 				throw new Error("operation.mode must be persist, session, or detached");
 			return { op, name: stringValue(source.name, "operation.name"), mode };
 		}
+		case "agent":
+			if (!isAgentControlCommandEnvelope(source.envelope))
+				throw new Error("operation.envelope is not a command envelope");
+			return { op, envelope: source.envelope };
 		default:
 			throw new Error(`Unknown daemon operation: ${op}`);
 	}
@@ -434,6 +467,10 @@ export function parseDaemonRpcResult(operation: DaemonOperation, value: unknown)
 			};
 		case "cancel":
 			return { op: "cancel", cancelled: booleanValue(source.cancelled, "result.cancelled") };
+		case "agent": {
+			if (!isAgentControlResult(source.response)) throw new Error("result.response is not an agent result");
+			return { op: "agent", response: source.response };
+		}
 		case "shutdown":
 			return { op: "shutdown" };
 	}
