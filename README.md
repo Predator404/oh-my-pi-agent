@@ -1,4 +1,32 @@
 <p align="center">
+  <strong>OMA — Persistent Agents</strong>
+</p>
+
+<p align="center">
+  A fork of <a href="https://github.com/can1357/oh-my-pi">Oh My Pi</a> that adds long-running, cross-session agents and personas.
+</p>
+
+> [!NOTE]
+> **This is OMA, a fork of OMP.** It ports [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent)'s
+> persistent-daemon subsystem onto OMP. Both are MIT and share the same `pi` root — see [`NOTICE`](./NOTICE).
+> The unchanged upstream OMP README follows below the divider.
+
+OMP sessions are process-lifetime only — close the terminal and the agent stops. OMA adds a **persistent layer** on top of OMP's tool surface, keeping everything OMP already ships (providers, LSP/DAP, skills, MCP, memory).
+
+- **Persistent sessions** — a daemon supervisor keeps agent sessions alive after the terminal detaches; reattach later, with heartbeats, schedules, and durable goals.
+- **Agents and personas** — a roster of named, long-running entities: *agents* (generalist, full cross-session memory) and *personas* (specialist, curated domain lessons), coordinating over a messaging layer.
+- **Own memory and vault** — per-entity vector recall plus a human-browsable Obsidian vault.
+- **Side by side with OMP** — `oma` runs under `~/.oma` with its own version and status-line marker; stock `omp` is untouched.
+
+```sh
+oma                       # launch the OMA build
+oma entity create <name> --role agent   # define an entity
+oma entity spawn <name>                 # start it as a persistent session
+```
+
+---
+
+<p align="center">
   <img src="https://github.com/can1357/oh-my-pi/blob/main/assets/hero.png?raw=true" alt="omp">
 </p>
 
