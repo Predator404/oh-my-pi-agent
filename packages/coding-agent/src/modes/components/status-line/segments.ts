@@ -4,6 +4,7 @@ import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { TERMINAL } from "@oh-my-pi/pi-tui";
 import { formatDuration, formatNumber, getProjectDir, pathIsWithin, relativePathWithinRoot } from "@oh-my-pi/pi-utils";
 import { type Theme, type ThemeColor, theme } from "../../../modes/theme/theme";
+import { isOmaBuild } from "../../../oma-identity";
 import { shortenPath, TRUNCATE_LENGTHS, truncateToWidth } from "../../../tools/render-utils";
 import { fileHyperlink } from "../../../tui/hyperlink";
 import { getSessionAccentAnsi, getSessionAccentHex } from "../../../utils/session-color";
@@ -106,7 +107,12 @@ const piSegment: StatusLineSegment = {
 			const icon = theme.icon.ghost ? `${theme.icon.ghost} ` : "";
 			return { content: theme.fg("warning", `${icon}${ctx.focusedAgentId} `), visible: true };
 		}
-		const content = theme.icon.pi ? `${theme.icon.pi} ` : "";
+		// OMA build appends "A" to the brand (π → πA) so a stock `omp` and an
+		// `oma` running side by side are distinguishable at a glance from this
+		// fixed spot. Falls back to a bare "π" if the active theme hides the icon.
+		const oma = isOmaBuild();
+		const piIcon = theme.icon.pi || (oma ? "π" : "");
+		const content = piIcon ? `${piIcon}${oma ? "A" : ""} ` : "";
 		return { content: theme.fg("accent", content), visible: true };
 	},
 };
