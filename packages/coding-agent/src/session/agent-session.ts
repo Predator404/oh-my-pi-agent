@@ -117,7 +117,7 @@ import { writeArchive } from "@oh-my-pi/pi-utils/ar";
 import { frameDataBytesBudget, readerIncludesThinking } from "@oh-my-pi/snapcompact";
 import type { AdvisorConfig } from "@oh-my-pi/pi-tui/overlays/advisor-config";
 import { formatUsageResetWindow } from "@oh-my-pi/pi-tui/overlays/usage-display";
-import { loadAdvisorTranscriptCosts } from "../advisor";
+import { loadAdvisorTranscriptCosts, parseAdvisorAddress, primaryDeferralInstruction } from "../advisor";
 import { ASYNC_JOB_MANAGER_SHUTDOWN_REASON, type AsyncJob, AsyncJobManager, type AsyncJobManagerApi } from "../async";
 import { classifyAutoPrewalk } from "../auto-prewalk/classifier";
 import { reset as resetCapabilities } from "../capability";
@@ -8972,6 +8972,16 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 				logger.debug("Turn started before MCP discovery finished", { error: String(error) });
 			});
 		}
+		// Direct advisor address (`@@<name>: ...`): when a live advisor answers to
+		// the addressed name, defer this turn to it via a turn-scoped system-prompt
+		// override — the advisor observes the conversation and answers the question
+		// directly. Real user turns only; synthetic/agent-initiated prompts never
+		// re-route.
+		let advisorDeferralName: string | undefined;
+		if (message.role === "user" && this.#advisors.isAdvisorActive()) {
+			const address = parseAdvisorAddress(prompt);
+			advisorDeferralName = address ? this.#advisors.resolveAddressedAdvisor(address.name) : undefined;
+		}
 		for (let attempt = 0; attempt < AGENT_START_POLICY_MAX_ATTEMPTS; attempt++) {
 			await this.#memory.transition;
 			if (!isCurrent()) return cancelled;
@@ -9030,13 +9040,17 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			}
 			if (!overrideIsCurrent()) continue;
 			return {
-				baseXdevCatalogDelivered: result?.systemPrompt === undefined,
+				baseXdevCatalogDelivered: result?.systemPrompt === undefined && !advisorDeferralName,
 				commit: () => {
 					// No await may separate ownership validation from publishing memory and policy.
 					if (!isCurrent() || !overrideIsCurrent()) return undefined;
 					if (basePreparation.commit?.() === false) return undefined;
-					if (result?.systemPrompt !== undefined) {
-						this.#tools.setTurnSystemPromptOverride(result.systemPrompt, basePreparation.systemPrompt);
+					if (result?.systemPrompt !== undefined || advisorDeferralName) {
+						const overrideBase = result?.systemPrompt ?? this.#tools.baseSystemPrompt;
+						const prompt = advisorDeferralName
+							? [...overrideBase, primaryDeferralInstruction(advisorDeferralName)]
+							: overrideBase;
+						this.#tools.setTurnSystemPromptOverride(prompt, basePreparation.systemPrompt);
 					} else {
 						this.#tools.clearTurnSystemPromptOverride();
 						this.agent.setSystemPrompt(this.#tools.baseSystemPrompt);

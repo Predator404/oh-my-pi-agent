@@ -6,10 +6,10 @@
  * goal, autonomous. Bootstrap (WS7a): setup. Business logic lives in
  * `../cli/entity-cli` so dispatch is unit-testable without a live broker.
  */
+import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import { Args, Command, Flags, renderCommandHelp } from "@oh-my-pi/pi-utils/cli";
 import { entityHelp as commandHelp } from "../cli/command-help";
 import { defaultEntityDeps, type EntityCommand, EntityCommandUsageError, runEntityCommand } from "../cli/entity-cli";
-import { initTheme } from "../modes/theme/theme";
 
 const ACTIONS = [
 	"roster",
