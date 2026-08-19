@@ -67,6 +67,14 @@ export interface EntityRuntimeClient {
 	autonomousOn(id: string, spec?: AgentAutonomousSpec): Promise<AgentAutonomousView>;
 	autonomousOff(id: string): Promise<AgentAutonomousView>;
 	autonomousStatus(id: string): Promise<AgentAutonomousView>;
+	/**
+	 * Release the broker connection. A one-shot CLI invocation MUST close it so
+	 * its persistent socket stops pinning Bun's event loop — otherwise `spawn`
+	 * and `ps` print their result and then hang instead of returning, leaving the
+	 * detached broker+worker with no clean client exit. Optional so structural
+	 * test doubles need not implement it.
+	 */
+	close?(): void;
 }
 
 /** Parsed flags accepted by `omp entity <action>`. */
@@ -319,13 +327,33 @@ async function runRuntimeAction(
 	flags: EntityCommandFlags,
 	deps: EntityCommandDeps,
 	json: boolean | undefined,
-	_registryRoot: string | undefined,
+	registryRoot: string | undefined,
 ): Promise<void> {
 	const client = await deps.connectClient();
+	try {
+		await runRuntimeDispatch(action, args, flags, deps, json, client, registryRoot);
+	} finally {
+		// One-shot CLI: drop the persistent broker socket so the process exits
+		// cleanly (detach-and-return). The detached broker + resident worker
+		// keep running independently of this client.
+		client.close?.();
+	}
+}
+
+/** Dispatch one C4 runtime action over an already-connected client. */
+async function runRuntimeDispatch(
+	action: string,
+	args: string[],
+	flags: EntityCommandFlags,
+	deps: EntityCommandDeps,
+	json: boolean | undefined,
+	client: EntityRuntimeClient,
+	_registryRoot: string | undefined,
+): Promise<void> {
 	switch (action) {
 		case "spawn": {
 			const name = requireArg(args, 0, "name");
-			const summary = await client.spawn(name, flags.cwd);
+			const summary = await client.spawn(name, flags.cwd ?? process.cwd());
 			return emit(deps, json, summary, `Spawned ${summary.entityName} as ${summary.id}`);
 		}
 		case "ps":

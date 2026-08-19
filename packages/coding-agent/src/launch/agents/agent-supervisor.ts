@@ -218,6 +218,17 @@ export class AgentSupervisor {
 		}
 	}
 
+	/**
+	 * Whether any resident worker session is still tracked. A record lives in the
+	 * map from spawn until it closes, fails, or is torn down by `stop`, so this is
+	 * the authoritative signal the broker uses to keep the detached agent-runtime
+	 * process (and its resident workers) alive past the launching client's exit
+	 * (SPEC §1.1). Without it the broker's idle-shutdown reaps live entities.
+	 */
+	hasResidentSessions(): boolean {
+		return this.#records.size > 0;
+	}
+
 	listSessions(): AgentSessionSummary[] {
 		return [...this.#records.values()].map(record => this.#summaryOf(record));
 	}
