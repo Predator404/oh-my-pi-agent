@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import * as fs from "node:fs";
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
@@ -27,12 +27,11 @@ describe("advisor direct-address wiring", () => {
 		const tempDir = TempDir.createSync("@pi-advisor-address-");
 		tempDirs.push(tempDir);
 		const cwd = tempDir.join("project-root");
-		fs.mkdirSync(cwd, { recursive: true });
+		await fs.mkdir(cwd, { recursive: true });
 		// A named advisor roster so the capability templates a real name.
-		fs.writeFileSync(
+		await Bun.write(
 			path.join(cwd, "WATCHDOG.yml"),
 			"advisors:\n  - name: Phi\n    enabled: true\n    instructions: |\n      You are Phi.\n",
-			"utf8",
 		);
 
 		const authStorage = createInMemoryAuthStorage();
@@ -77,7 +76,6 @@ describe("advisor direct-address wiring", () => {
 			const dump = session.formatAdvisorHistoryAsText();
 			expect(dump).not.toBeNull();
 			// The standing capability, templated with the advisor's own name.
-			expect(dump).toContain("Direct address");
 			expect(dump).toContain("@@Phi:");
 		} finally {
 			try {

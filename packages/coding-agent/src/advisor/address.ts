@@ -10,6 +10,10 @@
  * bias-to-silence ({@link advisorDirectAddressInstruction}).
  */
 
+import { prompt } from "@oh-my-pi/pi-utils";
+import directAddressTemplate from "../prompts/advisor/direct-address.md" with { type: "text" };
+import primaryDeferralTemplate from "../prompts/advisor/primary-deferral.md" with { type: "text" };
+
 /** A parsed `@@<name>: <message>` advisor address. */
 export interface AdvisorAddress {
 	/** The addressed token exactly as typed; resolve it against the live roster. */
@@ -44,15 +48,7 @@ export function parseAdvisorAddress(text: string): AdvisorAddress | undefined {
  * advisor is addressable), not tied to one persona.
  */
 export function advisorDirectAddressInstruction(advisorName: string): string {
-	return [
-		"## Direct address",
-		"",
-		`When a user message begins with \`@@${advisorName}:\` it is addressed directly to you.`,
-		"Treat it as a direct question: answer it fully, concretely, and promptly in a note,",
-		"grounded in your knowledge and vault as usual. A direct address overrides your default",
-		"bias-to-silence — you can and must respond when addressed this way. The primary agent",
-		"has been told to defer to you for that message.",
-	].join("\n");
+	return prompt.render(directAddressTemplate, { advisorName }).trim();
 }
 
 /**
@@ -61,10 +57,5 @@ export function advisorDirectAddressInstruction(advisorName: string): string {
  * owns the answer.
  */
 export function primaryDeferralInstruction(advisorName: string): string {
-	return (
-		`The user's message is addressed directly to the advisor "${advisorName}" ` +
-		`(it begins with \`@@${advisorName}:\`). Do NOT answer it substantively yourself. ` +
-		`Reply with a single short line acknowledging that ${advisorName} will respond, then stop. ` +
-		`${advisorName} observes this conversation and answers directly.`
-	);
+	return prompt.render(primaryDeferralTemplate, { advisorName }).trim();
 }
