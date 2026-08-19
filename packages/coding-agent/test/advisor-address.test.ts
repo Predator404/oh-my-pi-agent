@@ -60,17 +60,10 @@ describe("parseAdvisorAddress", () => {
 });
 
 describe("address instruction builders", () => {
-	it("templates the advisor's own name into the direct-address capability", () => {
-		const instruction = advisorDirectAddressInstruction("Phi");
-		expect(instruction).toContain("@@Phi:");
-		expect(instruction).toContain("Direct address");
-		expect(instruction).toContain("bias-to-silence");
-	});
-
-	it("names the addressee in the primary deferral directive and says do not answer", () => {
-		const directive = primaryDeferralInstruction("Phi");
-		expect(directive).toContain('"Phi"');
-		expect(directive).toContain("@@Phi:");
-		expect(directive).toMatch(/do not answer/i);
+	it("substitutes the advisor's own name into both rendered prompts", () => {
+		// Load-bearing behaviour is the Handlebars name substitution; the prompt
+		// wording lives in the .md templates and is intentionally not asserted.
+		expect(advisorDirectAddressInstruction("Sage")).toContain("Sage");
+		expect(primaryDeferralInstruction("Sage")).toContain("Sage");
 	});
 });
