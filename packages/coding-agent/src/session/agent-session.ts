@@ -103,7 +103,7 @@ import {
 } from "@oh-my-pi/pi-utils";
 import type { AdvisorConfig } from "@oh-my-pi/pi-tui/overlays/advisor-config";
 import { formatUsageResetWindow } from "@oh-my-pi/pi-tui/overlays/usage-display";
-import { loadAdvisorTranscriptCosts } from "../advisor";
+import { loadAdvisorTranscriptCosts, parseAdvisorAddress, primaryDeferralInstruction } from "../advisor";
 import { ASYNC_JOB_MANAGER_SHUTDOWN_REASON, type AsyncJob, AsyncJobManager } from "../async";
 import { reset as resetCapabilities } from "../capability";
 import type { EffectiveExtensionRoots } from "../capability/types";
@@ -6787,6 +6787,16 @@ export class AgentSession {
 			(!this.#isDisposed || alreadyDisposing) &&
 			!signal?.aborted;
 		const cancelled = { baseXdevCatalogDelivered: false, commit: () => undefined };
+		// Direct advisor address (`@@<name>: ...`): when a live advisor answers to
+		// the addressed name, defer this turn to it via a turn-scoped system-prompt
+		// override — the advisor observes the conversation and answers the question
+		// directly. Real user turns only; synthetic/agent-initiated prompts never
+		// re-route.
+		let advisorDeferralName: string | undefined;
+		if (message.role === "user" && this.#advisors.isAdvisorActive()) {
+			const address = parseAdvisorAddress(prompt);
+			advisorDeferralName = address ? this.#advisors.resolveAddressedAdvisor(address.name) : undefined;
+		}
 		for (let attempt = 0; attempt < AGENT_START_POLICY_MAX_ATTEMPTS; attempt++) {
 			await this.#memory.transition;
 			if (!isCurrent()) return cancelled;
@@ -6834,13 +6844,16 @@ export class AgentSession {
 			}
 			if (!overrideIsCurrent()) continue;
 			return {
-				baseXdevCatalogDelivered: result?.systemPrompt === undefined,
+				baseXdevCatalogDelivered: result?.systemPrompt === undefined && !advisorDeferralName,
 				commit: () => {
 					// No await may separate ownership validation from publishing memory and policy.
 					if (!isCurrent() || !overrideIsCurrent()) return undefined;
 					if (basePreparation.commit?.() === false) return undefined;
-					if (result?.systemPrompt !== undefined) {
-						this.#tools.setTurnSystemPromptOverride(result.systemPrompt);
+					if (result?.systemPrompt !== undefined || advisorDeferralName) {
+						const overrideBase = result?.systemPrompt ?? this.#tools.baseSystemPrompt;
+						this.#tools.setTurnSystemPromptOverride(
+							advisorDeferralName ? [...overrideBase, primaryDeferralInstruction(advisorDeferralName)] : overrideBase,
+						);
 					} else {
 						this.#tools.clearTurnSystemPromptOverride();
 						this.agent.setSystemPrompt(this.#tools.baseSystemPrompt);

@@ -13,11 +13,11 @@
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 import { getAgentDir, isRecord, logger, parseFrontmatter } from "@oh-my-pi/pi-utils";
 import type { AdvisorConfig } from "../advisor/config";
 import { parseArrayOrCSV, parseBoolean, parseModelList } from "../discovery/helpers";
 import type { AgentSource } from "../task/types";
-import { parseConfiguredThinkingLevel } from "../thinking";
 import { normalizeToolNames } from "../tools/builtin-names";
 import {
 	ENTITY_MEMORY_BACKENDS,
