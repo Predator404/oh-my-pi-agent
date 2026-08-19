@@ -21,7 +21,7 @@ import {
 	readStoredDaemonRecord,
 	writeDaemonScopeMeta,
 } from "./paths";
-import { AgentSupervisor, type ClientChannel } from "./agents/agent-supervisor";
+import { AgentSupervisor, type ClientChannel, type WorkerSpawner } from "./agents/agent-supervisor";
 import type { AgentControlEventEnvelope } from "./agents/control-protocol";
 import { SubprocessWorkerSpawner } from "./agents/subprocess-worker-spawner";
 import type { DaemonReadySpec, DaemonSnapshot, DaemonSpec } from "@oh-my-pi/pi-tui/tools/daemon";
@@ -424,7 +424,14 @@ function connectPort(host: string, port: number): Promise<boolean> {
 	return promise;
 }
 
-class DaemonBroker {
+/**
+ * Agent-worker spawner surface the broker depends on: spawn a resident worker
+ * and hard-stop every spawned worker on shutdown. Production uses
+ * {@link SubprocessWorkerSpawner}; tests inject an in-memory fake.
+ */
+export type AgentWorkerSpawner = WorkerSpawner & { killAll(): void };
+
+export class DaemonBroker {
 	readonly #projectDir: string;
 	readonly #runtimeDir: string;
 	readonly #endpoint: string;
@@ -455,7 +462,8 @@ class DaemonBroker {
 	#idleTimer: NodeJS.Timeout | undefined;
 	#shuttingDown = false;
 	#agentSupervisor: AgentSupervisor | undefined;
-	#agentSpawner: SubprocessWorkerSpawner | undefined;
+	#agentSpawner: AgentWorkerSpawner | undefined;
+	readonly #agentSpawnerOverride: AgentWorkerSpawner | undefined;
 	readonly #agentClients = new Map<IpcConnection, ClientChannel>();
 	#agentClientSeq = 0;
 
@@ -466,6 +474,7 @@ class DaemonBroker {
 		idleGraceMs: number,
 		restartBackoffBaseMs: number,
 		endpointCheckMs: number,
+		agentSpawner?: AgentWorkerSpawner,
 	) {
 		this.#projectDir = projectDir;
 		this.#runtimeDir = runtimeDir;
@@ -474,6 +483,7 @@ class DaemonBroker {
 		this.#idleGraceMs = idleGraceMs;
 		this.#restartBackoffBaseMs = restartBackoffBaseMs;
 		this.#endpointCheckMs = endpointCheckMs;
+		this.#agentSpawnerOverride = agentSpawner;
 	}
 
 	async run(onListening?: () => void): Promise<void> {
@@ -486,7 +496,9 @@ class DaemonBroker {
 		if (process.platform !== "win32") this.#watchEndpoint();
 		this.#scheduleIdleShutdown();
 		onListening?.();
-		this.#agentSpawner = new SubprocessWorkerSpawner({ runtimeDir: this.#runtimeDir, projectDir: this.#projectDir });
+		this.#agentSpawner =
+			this.#agentSpawnerOverride ??
+			new SubprocessWorkerSpawner({ runtimeDir: this.#runtimeDir, projectDir: this.#projectDir });
 		this.#agentSupervisor = new AgentSupervisor({
 			spawner: this.#agentSpawner,
 			journalPath: path.join(this.#runtimeDir, "agent-journal.jsonl"),
@@ -1589,6 +1601,15 @@ class DaemonBroker {
 					record => record.spec.persist && !terminalState(record.snapshot.state),
 				);
 				if (this.#clients.size > 0 || livePersistent) return;
+				// A detached agent-runtime session must outlive the launching client
+				// (SPEC §1.1). While the supervisor still tracks a resident worker,
+				// keep the broker (and its workers) alive and re-arm on the idle
+				// cadence; once the last session ends this loop lets the broker
+				// settle through the checks below instead of pinning it forever.
+				if (this.#agentSupervisor?.hasResidentSessions()) {
+					this.#scheduleIdleShutdown();
+					return;
+				}
 				if (await hasLiveDaemonProjectPresence(this.#runtimeDir)) {
 					this.#scheduleIdleShutdown();
 					return;

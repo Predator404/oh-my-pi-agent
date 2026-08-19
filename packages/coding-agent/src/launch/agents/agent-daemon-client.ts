@@ -52,6 +52,11 @@ export class AgentDaemonClient {
 		return this.#clientId;
 	}
 
+	/** Release the underlying broker socket so a one-shot caller can exit. */
+	close(): void {
+		this.#broker.close();
+	}
+
 	/**
 	 * Send one raw command and return its typed result. `commandId` keys the
 	 * broker's idempotency journal — reuse it on a retry to avoid re-running a

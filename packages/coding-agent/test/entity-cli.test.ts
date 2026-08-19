@@ -124,6 +124,7 @@ function makeHarness() {
 			record("autonomousStatus", id);
 			return auto as never;
 		},
+		close: () => record("close"),
 	};
 
 	const deps: EntityCommandDeps = {
@@ -187,6 +188,26 @@ describe("runEntityCommand — runtime C4 surface", () => {
 		await run(cmd("spawn", ["phi"], { cwd: "/proj" }), h.deps);
 		expect(h.calls).toContainEqual({ method: "spawn", args: ["phi", "/proj"] });
 		expect(h.out.join("")).toContain("Spawned");
+	});
+
+	it("defaults spawn cwd to the caller's cwd when --cwd is absent", async () => {
+		const h = makeHarness();
+		await run(cmd("spawn", ["phi"]), h.deps);
+		expect(h.calls).toContainEqual({ method: "spawn", args: ["phi", process.cwd()] });
+	});
+
+	it("closes the client after a one-shot runtime action so the CLI process can exit", async () => {
+		const h = makeHarness();
+		await run(cmd("spawn", ["phi"]), h.deps);
+		// The persistent broker socket must be released last (detach-and-return),
+		// otherwise it pins the event loop and `spawn`/`ps` hang instead of exiting.
+		expect(h.calls.at(-1)).toEqual({ method: "close", args: [] });
+	});
+
+	it("closes the client even when the action fails", async () => {
+		const h = makeHarness();
+		await expect(run(cmd("attach", []), h.deps)).rejects.toBeInstanceOf(EntityCommandUsageError);
+		expect(h.calls.some(c => c.method === "close")).toBe(true);
 	});
 
 	it("ps lists running sessions", async () => {
