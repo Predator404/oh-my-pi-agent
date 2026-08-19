@@ -49,6 +49,7 @@ import {
 	type AdvisorRuntimeStatus,
 	type AdvisorSeverity,
 	AdvisorTranscriptRecorder,
+	advisorDirectAddressInstruction,
 	advisorTranscriptFilename,
 	buildAdvisorQuarantineSourceText,
 	formatAdvisorBatchContent,
@@ -736,6 +737,10 @@ export class SessionAdvisors {
 			if (this.#advisorWatchdogPrompt) systemPrompt.push(this.#advisorWatchdogPrompt);
 			if (this.#advisorSharedInstructions) systemPrompt.push(this.#advisorSharedInstructions);
 			if (config.instructions?.trim()) systemPrompt.push(config.instructions.trim());
+			// Standing capability, appended last so it takes precedence over any
+			// "you cannot be addressed" phrasing in the advisor's own doctrine:
+			// a `@@<name>:` message is a direct question this advisor must answer.
+			systemPrompt.push(advisorDirectAddressInstruction(advisorName));
 
 			const names = config.tools === undefined ? ADVISOR_DEFAULT_TOOL_NAMES : new Set(config.tools);
 			const tools = (this.#advisorTools ?? []).filter(t => names.has(t.name));
@@ -1676,6 +1681,19 @@ export class SessionAdvisors {
 	 */
 	isAdvisorActive(): boolean {
 		return this.#advisors.length > 0;
+	}
+
+	/**
+	 * Resolve a `@@<token>` address ({@link parseAdvisorAddress}) to a live
+	 * advisor's canonical name, matching by slug or case-insensitive name.
+	 * Returns `undefined` when no active advisor answers to that token, so the
+	 * caller leaves the message as an ordinary prompt.
+	 */
+	resolveAddressedAdvisor(token: string): string | undefined {
+		const slug = slugifyAdvisorName(token);
+		const lower = token.toLowerCase();
+		const hit = this.#advisors.find(advisor => advisor.slug === slug || advisor.name.toLowerCase() === lower);
+		return hit?.name;
 	}
 
 	/**
