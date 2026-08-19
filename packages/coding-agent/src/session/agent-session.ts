@@ -98,7 +98,13 @@ import {
 	stringProperty,
 	withTimeout,
 } from "@oh-my-pi/pi-utils";
-import { type AdvisorConfig, type AdvisorRuntimeStatus, loadAdvisorTranscriptCosts } from "../advisor";
+import {
+	type AdvisorConfig,
+	type AdvisorRuntimeStatus,
+	loadAdvisorTranscriptCosts,
+	parseAdvisorAddress,
+	primaryDeferralInstruction,
+} from "../advisor";
 import { ASYNC_JOB_MANAGER_SHUTDOWN_REASON, type AsyncJob, AsyncJobManager } from "../async";
 import { shouldEnableAppendOnlyContext } from "../config/append-only-context-mode";
 import type { ModelRegistry } from "../config/model-registry";
@@ -5628,6 +5634,16 @@ export class AgentSession {
 			await this.#memory.transition;
 			if ((this.#isDisposed && !disposingBeforeTransition) || this.#promptGeneration !== generation) return;
 			const beforeAgentStartSystemPrompt = await this.#buildSystemPromptForAgentStart(expandedText);
+
+			// Direct advisor address (`@@<name>: ...`): when a live advisor answers
+			// to the addressed name, defer this turn to it — the advisor observes
+			// the conversation and answers the question directly. Real user turns
+			// only; synthetic/agent-initiated prompts never re-route.
+			if (message.role === "user" && this.#advisors.isAdvisorActive()) {
+				const address = parseAdvisorAddress(expandedText);
+				const advisorName = address ? this.#advisors.resolveAddressedAdvisor(address.name) : undefined;
+				if (advisorName) beforeAgentStartSystemPrompt.push(primaryDeferralInstruction(advisorName));
+			}
 
 			let baseXdevCatalogDelivered = true;
 			// Emit before_agent_start extension event
