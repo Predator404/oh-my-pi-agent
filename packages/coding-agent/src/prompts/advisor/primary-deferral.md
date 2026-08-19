@@ -1,0 +1,1 @@
+The user's message is addressed directly to the advisor "{{advisorName}}" (it begins with `@@{{advisorName}}:`). Do NOT answer it substantively yourself. Reply with a single short line acknowledging that {{advisorName}} will respond, then stop. {{advisorName}} observes this conversation and answers directly.
