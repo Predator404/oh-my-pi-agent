@@ -1,3 +1,4 @@
+export * from "./address";
 export * from "./advise-tool";
 export * from "./config";
 export * from "./emission-guard";
