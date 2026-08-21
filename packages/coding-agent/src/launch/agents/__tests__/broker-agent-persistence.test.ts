@@ -1,18 +1,17 @@
+import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, expect, test } from "bun:test";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import { type AgentWorkerSpawner, DaemonBroker } from "../../broker";
 import { createDaemonBrokerClient, type DaemonBrokerClient } from "../../client";
 import { daemonBrokerEndpoint } from "../../paths";
 import { AgentDaemonClient } from "../agent-daemon-client";
-import { AgentWorker, type WorkerScheduling } from "../agent-worker";
 import type { WorkerSpawnRequest } from "../agent-supervisor";
+import { AgentWorker, type WorkerScheduling } from "../agent-worker";
 import type { CustomEntryLike, GoalCheckpointData, JobOutcomeData } from "../artifacts";
-import type { AgentMessageMode } from "../control-protocol";
-import type { AgentAutonomousView, AgentGoalView, AgentScheduledJobView } from "../control-protocol";
+import type { AgentAutonomousView, AgentGoalView, AgentMessageMode, AgentScheduledJobView } from "../control-protocol";
 import type { SessionActivity } from "../prompt-injector";
 import type { ResidentSession } from "../resident-session";
 import { createMemoryLinkPair } from "../worker-transport";
@@ -155,7 +154,15 @@ class FakeScheduling implements WorkerScheduling {
 		this.stopped = true;
 	}
 	addJob(): AgentScheduledJobView {
-		return { id: "job-1", source: "cron", kind: "interval", status: "active", prompt: "p", schedule: "every 5m", runCount: 0 };
+		return {
+			id: "job-1",
+			source: "cron",
+			kind: "interval",
+			status: "active",
+			prompt: "p",
+			schedule: "every 5m",
+			runCount: 0,
+		};
 	}
 	listJobs(): AgentScheduledJobView[] {
 		return [];
@@ -164,7 +171,15 @@ class FakeScheduling implements WorkerScheduling {
 		return true;
 	}
 	setHeartbeat(): AgentScheduledJobView {
-		return { id: "hb", source: "heartbeat", kind: "interval", status: "active", prompt: "p", schedule: "every 5m", runCount: 0 };
+		return {
+			id: "hb",
+			source: "heartbeat",
+			kind: "interval",
+			status: "active",
+			prompt: "p",
+			schedule: "every 5m",
+			runCount: 0,
+		};
 	}
 	pauseHeartbeat(): AgentScheduledJobView | undefined {
 		return undefined;
@@ -297,85 +312,81 @@ describe("broker resident-agent persistence (SPEC §1.1)", () => {
 	const restartBackoffBaseMs = 1_000;
 	const pastGraceMs = idleGraceMs * 3 + 200;
 
-	test(
-		"resident agent session survives the launching client's exit and is adopted by a new client",
-		async () => {
-			const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "oma-broker-proj-"));
-			const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), "oma-broker-rt-"));
-			const projectDir = await fs.realpath(projectRoot);
-			const runtimeDir = await fs.realpath(runtimeRoot);
-			const token = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
-			await fs.writeFile(path.join(runtimeDir, "broker.token"), token, { mode: 0o600 });
+	test("resident agent session survives the launching client's exit and is adopted by a new client", async () => {
+		const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "oma-broker-proj-"));
+		const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), "oma-broker-rt-"));
+		const projectDir = await fs.realpath(projectRoot);
+		const runtimeDir = await fs.realpath(runtimeRoot);
+		const token = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
+		await fs.writeFile(path.join(runtimeDir, "broker.token"), token, { mode: 0o600 });
 
-			const { spawner, state } = makeFakeSpawner();
-			const broker = new DaemonBroker(projectDir, runtimeDir, token, idleGraceMs, restartBackoffBaseMs, spawner);
+		const { spawner, state } = makeFakeSpawner();
+		const broker = new DaemonBroker(projectDir, runtimeDir, token, idleGraceMs, restartBackoffBaseMs, spawner);
 
-			let brokerResolved = false;
-			// run() resolves only when the broker fully shuts down. Keep the promise;
-			// never await it inline (it would hang the test forever).
-			const running = broker
-				.run()
-				.then(() => {
-					brokerResolved = true;
-				})
-				.catch(() => {
-					brokerResolved = true;
-				});
+		let brokerResolved = false;
+		// run() resolves only when the broker fully shuts down. Keep the promise;
+		// never await it inline (it would hang the test forever).
+		const running = broker
+			.run()
+			.then(() => {
+				brokerResolved = true;
+			})
+			.catch(() => {
+				brokerResolved = true;
+			});
 
-			const endpoint = daemonBrokerEndpoint(projectDir, runtimeDir);
-			let rawA: DaemonBrokerClient | undefined;
-			let rawB: DaemonBrokerClient | undefined;
-			try {
-				await waitForEndpoint(endpoint, 5_000);
-				// Let the awaited chmod + supervisor init settle before the first RPC.
-				await Bun.sleep(30);
+		const endpoint = daemonBrokerEndpoint(projectDir, runtimeDir);
+		let rawA: DaemonBrokerClient | undefined;
+		let rawB: DaemonBrokerClient | undefined;
+		try {
+			await waitForEndpoint(endpoint, 5_000);
+			// Let the awaited chmod + supervisor init settle before the first RPC.
+			await Bun.sleep(30);
 
-				// Client A: the launching CLI. Spawn a resident "phi" worker.
-				rawA = await createDaemonBrokerClient(projectDir, { runtimeDir });
-				const clientA = new AgentDaemonClient(rawA);
-				const spawned = await spawnAgent(clientA, "phi", projectDir);
-				expect(spawned.workerState).toBe("ready");
-				const sessionId = spawned.id;
+			// Client A: the launching CLI. Spawn a resident "phi" worker.
+			rawA = await createDaemonBrokerClient(projectDir, { runtimeDir });
+			const clientA = new AgentDaemonClient(rawA);
+			const spawned = await spawnAgent(clientA, "phi", projectDir);
+			expect(spawned.workerState).toBe("ready");
+			const sessionId = spawned.id;
 
-				// The launching CLI exits: drop its socket and wait past the idle grace.
-				rawA.close();
-				rawA = undefined;
-				await Bun.sleep(pastGraceMs);
+			// The launching CLI exits: drop its socket and wait past the idle grace.
+			rawA.close();
+			rawA = undefined;
+			await Bun.sleep(pastGraceMs);
 
-				// SPEC §1.1: the broker MUST persist and keep the resident worker
-				// alive after its launching client disconnects. Today the idle timer
-				// is blind to resident agent sessions, so it shuts the broker down and
-				// killAll() reaps the worker — these two assertions are the red signal.
-				expect(state.killAllCount).toBe(0);
-				expect(brokerResolved).toBe(false);
+			// SPEC §1.1: the broker MUST persist and keep the resident worker
+			// alive after its launching client disconnects. Today the idle timer
+			// is blind to resident agent sessions, so it shuts the broker down and
+			// killAll() reaps the worker — these two assertions are the red signal.
+			expect(state.killAllCount).toBe(0);
+			expect(brokerResolved).toBe(false);
 
-				// A brand-new client adopts the SAME still-live broker: the phi session
-				// is still resident and ready — no cold start, no lost worker.
-				await waitForEndpoint(endpoint, 2_000);
-				rawB = await createDaemonBrokerClient(projectDir, { runtimeDir });
-				const clientB = new AgentDaemonClient(rawB);
-				const sessions = await clientB.list();
-				const survivor = sessions.find(s => s.id === sessionId);
-				expect(survivor).toBeDefined();
-				expect(survivor?.workerState).toBe("ready");
+			// A brand-new client adopts the SAME still-live broker: the phi session
+			// is still resident and ready — no cold start, no lost worker.
+			await waitForEndpoint(endpoint, 2_000);
+			rawB = await createDaemonBrokerClient(projectDir, { runtimeDir });
+			const clientB = new AgentDaemonClient(rawB);
+			const sessions = await clientB.list();
+			const survivor = sessions.find(s => s.id === sessionId);
+			expect(survivor).toBeDefined();
+			expect(survivor?.workerState).toBe("ready");
 
-				// Control: the fix must NOT pin the broker open forever. Once the last
-				// resident session is stopped and no client is attached, idle shutdown
-				// must still fire and run() must resolve.
-				await clientB.stop(sessionId);
-				rawB.close();
-				rawB = undefined;
-				await waitFor(() => brokerResolved, pastGraceMs + 3_000, "idle shutdown once nothing is resident");
-				expect(brokerResolved).toBe(true);
-			} finally {
-				rawA?.close();
-				rawB?.close();
-				await broker.shutdown();
-				await running;
-				await fs.rm(projectRoot, { recursive: true, force: true });
-				await fs.rm(runtimeRoot, { recursive: true, force: true });
-			}
-		},
-		20_000,
-	);
+			// Control: the fix must NOT pin the broker open forever. Once the last
+			// resident session is stopped and no client is attached, idle shutdown
+			// must still fire and run() must resolve.
+			await clientB.stop(sessionId);
+			rawB.close();
+			rawB = undefined;
+			await waitFor(() => brokerResolved, pastGraceMs + 3_000, "idle shutdown once nothing is resident");
+			expect(brokerResolved).toBe(true);
+		} finally {
+			rawA?.close();
+			rawB?.close();
+			await broker.shutdown();
+			await running;
+			await fs.rm(projectRoot, { recursive: true, force: true });
+			await fs.rm(runtimeRoot, { recursive: true, force: true });
+		}
+	}, 20_000);
 });
