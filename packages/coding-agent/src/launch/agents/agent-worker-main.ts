@@ -115,6 +115,36 @@ export async function buildEntityMcpManager(
 	return manager;
 }
 
+/**
+ * Surface a provided MCP manager's already-connected tools onto an entity
+ * session, and keep them live across `tools/list_changed`.
+ *
+ * `createAgentSession` only auto-registers MCP tools when it OWNS the manager
+ * (`enableMCP && !options.mcpManager` in sdk.ts); a *provided* manager is the
+ * subagent-inheritance shape and assumes a parent session already registered
+ * its tools. An entity worker builds its own manager ({@link
+ * buildEntityMcpManager}) and has no parent, so without this its memory (C2
+ * bank) + vault (C3 section) servers connect but their recall/retain/forget +
+ * vault tools never reach the entity. Mirrors the owner-path `setOnToolsChanged`
+ * → `refreshMCPTools` wiring in sdk.ts.
+ *
+ * Structural param types (`Pick`) so the worker glue is unit-testable with
+ * lightweight doubles, without standing up a real session or provider.
+ */
+export async function registerEntityMcpTools(
+	session: Pick<AgentSession, "refreshMCPTools">,
+	mcpManager: Pick<MCPManager, "getTools" | "setOnToolsChanged">,
+): Promise<void> {
+	await session.refreshMCPTools(mcpManager.getTools());
+	mcpManager.setOnToolsChanged(tools => {
+		void session.refreshMCPTools(tools).catch(error =>
+			logger.warn("entity MCP tool refresh failed", {
+				error: error instanceof Error ? error.message : String(error),
+			}),
+		);
+	});
+}
+
 /** Flatten a message's text content blocks. */
 function messageText(message: AgentMessage): string {
 	if (!("content" in message)) return "";
@@ -253,6 +283,11 @@ export async function startAgentWorkerFromEnvironment(env: NodeJS.ProcessEnv = p
 		agentDisplayName: entityName,
 		mcpManager,
 	});
+
+	// Surface the entity's own memory (C2) + vault (C3) MCP tools onto the
+	// session. createAgentSession skips this for a provided manager (see
+	// registerEntityMcpTools), and an entity worker has no parent to do it.
+	if (mcpManager) await registerEntityMcpTools(session, mcpManager);
 
 	const resident = new AgentSessionResidentSession(session, activeSessionId);
 	const scheduling = new ResidentScheduling(resident);
