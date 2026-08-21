@@ -730,6 +730,28 @@ describe("(c+d) memory + vault through the real spawn glue (buildEntityMcpManage
 			expect(memTools).toEqual(["forget", "recall", "retain"]);
 			expect(vaultTools).toEqual(["get_connections", "get_note", "search_notes", "write_note"].sort());
 
+			// The aggregate `getTools()` — the exact input the worker feeds to
+			// `session.refreshMCPTools` (registerEntityMcpTools) — surfaces BOTH
+			// servers' tools, namespaced `mcp__<server>_<tool>`. Regression guard:
+			// the provided-manager path used to orphan these from the entity
+			// session entirely, so the entity saw none of them.
+			expect(
+				agentMgr!
+					.getTools()
+					.map(t => t.name)
+					.sort(),
+			).toEqual(
+				[
+					"mcp__memory_forget",
+					"mcp__memory_recall",
+					"mcp__memory_retain",
+					"mcp__vault_get_connections",
+					"mcp__vault_get_note",
+					"mcp__vault_search_notes",
+					"mcp__vault_write_note",
+				].sort(),
+			);
+
 			// C2: the agent (episodic) server accepts auto-retain into its bound
 			// bank (no `bank` arg — the --bank flag binds it), recall reads it back.
 			const agentRetain = unwrapToolJson(
