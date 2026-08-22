@@ -451,6 +451,22 @@ export function buildSessionContext(
 					appendMessage(entry);
 				}
 			}
+		} else if (compaction.speculativeSuffixStartId) {
+			// A speculative compaction summarized a prefix snapshot; the remote
+			// replacement payload carries that snapshot's kept tail but never saw
+			// the turns recorded after the snapshot yet before this compaction was
+			// applied. Replay that post-snapshot suffix here so a user/tool turn
+			// added while the summary was in flight survives the rebuild (#9351).
+			let foundSuffixStart = false;
+			for (let i = 0; i < compactionIdx; i++) {
+				const entry = path[i];
+				if (entry.id === compaction.speculativeSuffixStartId) {
+					foundSuffixStart = true;
+				}
+				if (foundSuffixStart) {
+					appendMessage(entry);
+				}
+			}
 		}
 
 		// Display transcript: emit the summary at the chronological compaction
