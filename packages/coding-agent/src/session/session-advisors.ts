@@ -69,6 +69,7 @@ import {
 	getOrCreateAdvisorProviderSessionId,
 	isAdvisorInterruptImmuneTurnActive,
 	isClassifierRefusal,
+	isInterruptingSeverity,
 	meetsAdvisorSeverity,
 	quarantineAdvisorUnsafeOutput,
 	resolveAdvisorDeliveryChannel,
@@ -629,6 +630,14 @@ export class SessionAdvisors {
 	#pendingAdvisorCardEvents = new Set<Promise<void>>();
 	#advisorYieldQueueUnsubscribe: (() => void) | undefined;
 	#entityVisualByName: Record<string, { icon?: string; color?: string }> | undefined;
+	/**
+	 * Canonical names of advisors with an unanswered direct address (`@@<name>:`).
+	 * The addressed advisor's next accepted advice is force-surfaced (never routed
+	 * to the idle-suppressed aside queue) so a plain, severity-free answer reaches
+	 * the user instead of stranding until the next prompt. Consumed on that first
+	 * advice; cleared wholesale on conversation boundary.
+	 */
+	#pendingDirectAddress = new Set<string>();
 
 	constructor(host: SessionAdvisorsHost, options: SessionAdvisorsOptions) {
 		this.#host = host;
@@ -1125,6 +1134,7 @@ export class SessionAdvisors {
 		this.#advisorAutoResumeSuppressed = false;
 		this.#advisorBoundaryNotes = [];
 		this.#advisorBoundaryGuidanceLastTurn = undefined;
+		this.#pendingDirectAddress.clear();
 		this.#host.yieldQueue.clear("advisor");
 		this.#host.extractQueuedAdvisorCards();
 		this.#host.dropPendingAdvisorCards();
@@ -1802,26 +1812,25 @@ export class SessionAdvisors {
 		}
 		const notes: AdvisorNote[] = [{ note, severity, advisor: source, icon: visual?.icon, color: visual?.color }];
 		const terminalAnswerNoQueuedWork = this.#hasTerminalTextAnswerWithoutQueuedWork();
-		// A note that lands after the boundary window closed (catch-up off, or a
-		// review slower than its wait) gets exactly what the merged boundary flush
-		// would have granted it. The loop may still report streaming here, and an
-		// aside would be drained into an extra turn that skips the continuation latch.
-		if (this.#terminalUnwindActive && terminalAnswerNoQueuedWork) {
-			this.#deliverAdvisorBatch(notes, formatAdvisorBatchContent(notes), this.#continuesFinishedRun(severity));
-			return;
-		}
+		const interrupting = isInterruptingSeverity(severity);
+		const terminalUnwindPreserve = this.#terminalUnwindActive && severity !== "blocker" && terminalAnswerNoQueuedWork;
+		// A direct address awaiting this advisor's answer forces visible delivery:
+		// consume the pending flag (first accepted note wins) so the reply surfaces
+		// regardless of severity instead of stranding on the idle-suppressed aside queue.
+		const directAddress = this.#pendingDirectAddress.delete(advisor.name);
 		const channel = resolveAdvisorDeliveryChannel({
 			severity,
 			continueSeverity: cfgAdvisorContinueSeverity.get(this.#host.settings),
 			autoResumeSuppressed: this.#advisorAutoResumeSuppressed,
-			preserveOnly: this.#preserveAdvisorAdvice,
+			preserveOnly: this.#preserveAdvisorAdvice || terminalUnwindPreserve,
 			// Key on the live agent-core loop, not session `isStreaming` (which also
 			// counts `#promptInFlightCount` during post-turn unwind). Only a running
 			// loop consumes a steer at its next boundary.
-			streaming: this.#host.agent.state.isStreaming && !this.#preserveTerminalYieldAdvice,
+			streaming: this.#host.agent.state.isStreaming && !this.#preserveTerminalYieldAdvice && !terminalUnwindPreserve,
 			aborting: this.#host.abortInProgress(),
 			terminalAnswerNoQueuedWork,
-			interruptImmuneTurnActive: this.#isAdvisorInterruptImmuneTurnActive(),
+			interruptImmuneTurnActive: interrupting && this.#isAdvisorInterruptImmuneTurnActive(),
+			directAddress,
 		});
 		if (channel === "aside") {
 			this.#host.yieldQueue.enqueue("advisor", {
@@ -2920,6 +2929,16 @@ export class SessionAdvisors {
 		const lower = token.toLowerCase();
 		const hit = this.#advisors.find(advisor => advisor.slug === slug || advisor.name.toLowerCase() === lower);
 		return hit?.name;
+	}
+
+	/**
+	 * Mark that the primary turn is deferring a direct address (`@@<name>:`) to
+	 * `advisorName` (a canonical name from {@link resolveAddressedAdvisor}). The
+	 * addressed advisor's next accepted advice is delivered visibly rather than
+	 * as an idle-suppressed aside, so the user's explicit question is answered.
+	 */
+	markDirectAddress(advisorName: string): void {
+		this.#pendingDirectAddress.add(advisorName);
 	}
 
 	/**
