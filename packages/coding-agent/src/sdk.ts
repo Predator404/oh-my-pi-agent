@@ -73,6 +73,7 @@ import { withOmpExtensionRootScope } from "./discovery/omp-extension-roots";
 import { disposeAllJuliaKernelSessions, disposeJuliaKernelSessionsByOwner } from "./eval/jl/executor";
 import { disposeVmContextsByOwner } from "./eval/js/context-manager";
 import { disposeAllKernelSessions, disposeKernelSessionsByOwner } from "./eval/py/executor";
+import { handleAutoCompactionEndManifest } from "./eval/py/post-compaction-manifest";
 import { disposeAllRubyKernelSessions, disposeRubyKernelSessionsByOwner } from "./eval/rb/executor";
 import { defaultEvalSessionId } from "./eval/session-id";
 import {
@@ -3645,6 +3646,19 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			build: buildLateDiagnosticsBatchMessage,
 			isStale: entry => entry.isStale(),
 		});
+
+		// Re-inject a live-state manifest of the persistent Python kernel after every
+		// successful auto-compaction. Compaction rewrites the transcript but leaves
+		// the eval kernel (and its variables/imports) intact, so the model would
+		// otherwise forget state it deliberately stashed. Wired here so it fires for
+		// every SDK session — interactive AND resident/headless entity workers, which
+		// both build their AgentSession through createAgentSession.
+		const unsubscribeStateManifest = session.subscribe(event => {
+			if (event.type === "auto_compaction_end") {
+				void handleAutoCompactionEndManifest(session, event);
+			}
+		});
+		disposeCallbacks.add(unsubscribeStateManifest);
 
 		// Attach the live session to the pre-registered ref so peers can route IRC
 		// messages here. Refresh sessionFile in case it was unavailable at pre-register

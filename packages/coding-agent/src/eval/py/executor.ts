@@ -388,6 +388,15 @@ export async function disposeKernelSessionsByOwner(ownerId: string): Promise<voi
 	await sessionRegistry.disposeByOwner(ownerId);
 }
 
+/**
+ * True when a live (or still-starting) Python kernel session is currently held
+ * for `ownerId`. Never spawns a kernel — a pure registry lookup — so callers can
+ * gate introspection on whether there is any user state worth reading.
+ */
+export function hasKernelSessionForOwner(ownerId: string): boolean {
+	return sessionRegistry.hasOwner(ownerId);
+}
+
 export async function executePythonWithKernel(
 	kernel: PythonKernelExecutor,
 	code: string,
