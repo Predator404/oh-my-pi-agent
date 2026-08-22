@@ -90,7 +90,9 @@ interface KernelSessionRegistryDescriptor<
 interface KernelSessionRegistry<TKernel extends RegistryKernel, TOptions extends KernelSessionRegistryOptions, R> {
 	disposeAll(): Promise<void>;
 	disposeByOwner(ownerId: string): Promise<void>;
-	executeOnSession(code: string, cwd: string, options: TOptions): Promise<R>;
+	/** True when a live (or still-starting) kernel session is currently held for this owner. Never spawns. */
+	hasOwner(ownerId: string): boolean;
+	executeOnSession(code: string, cwd: string, options: TOptions): Promise<TResult>;
 	peekLiveKernel(cwd: string, options: TOptions): TKernel | undefined;
 }
 
@@ -422,6 +424,16 @@ export function createKernelSessionRegistry<
 		return retryKernel;
 	}
 
+	function hasOwner(ownerId: string): boolean {
+		for (const session of sessions.values()) {
+			if (session.ownerIds.has(ownerId)) return true;
+		}
+		for (const starting of startingSessions.values()) {
+			if (starting.ownerIds.has(ownerId)) return true;
+		}
+		return false;
+	}
+
 	function peekLiveKernel(cwd: string, options: TOptions): TKernel | undefined {
 		const sessionId = options.sessionId ?? `session:${cwd}`;
 		const sessionKey = resolveOwnerScopedSessionKey({
@@ -435,7 +447,7 @@ export function createKernelSessionRegistry<
 		return kernel?.isAlive() ? kernel : undefined;
 	}
 
-	async function executeOnSession(code: string, cwd: string, options: TOptions): Promise<R> {
+	async function executeOnSession(code: string, cwd: string, options: TOptions): Promise<TResult> {
 		const sessionId = options.sessionId ?? `session:${cwd}`;
 		const sessionKey = resolveOwnerScopedSessionKey({
 			baseKey: descriptor.buildSessionKey(sessionId, cwd, options.interpreter),
@@ -512,5 +524,5 @@ export function createKernelSessionRegistry<
 		return retryResult;
 	}
 
-	return { disposeAll, disposeByOwner, executeOnSession, peekLiveKernel };
+	return { disposeAll, disposeByOwner, hasOwner, executeOnSession, peekLiveKernel };
 }
