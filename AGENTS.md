@@ -291,6 +291,21 @@ Location: `packages/*/CHANGELOG.md` (per package).
 - Internal (from issues): `Fixed foo bar ([#123](https://github.com/can1357/oh-my-pi/issues/123))`.
 - External contributions: `Added feature X ([#456](https://github.com/can1357/oh-my-pi/pull/456) by [@username](https://github.com/username))`.
 
+## Follow-ups
+
+**(OMA fork only — do not carry upstream.)** Location: `~/vault/projects/oh-my-pi-agents/follow-ups.md` — the OMA fork's follow-up register (a git-backed vault, not copied into this repo). It is the binding parallel to the Changelog: where work that is *committed/merged/pushed* but not yet *done* is tracked, so nothing falls through the gap between the two.
+
+**When to update** — treat with the same force as the Changelog:
+
+- On completing a work item (a bug fix, feature, or any committed/pushed/merged change), record its still-open follow-ups — non-blocking review findings, deferred scope, TODOs, and "verified live but not tested" gaps — under a section for that PR/change **before the work is considered closed out**.
+- When a recorded follow-up is addressed, mark it `[x]` (ideally in the change that resolves it); leave `[ ]` while open.
+
+**Rules:**
+
+- A change is not "done" until BOTH the changelog entry and the follow-up register are updated. Skipping the register is the same class of miss as skipping the changelog.
+- Deep technical threads get their own note under `~/vault/projects/oh-my-pi-agents/investigations/` and are linked from the register rather than restated inline.
+- The register lives in the vault (working memory); commit its updates to the vault repo, not this one.
+
 ## Releasing
 
 1. Ensure all changes since last release are in each affected package's `[Unreleased]` section.
