@@ -5,6 +5,7 @@
  * so dispatch is verified without a live daemon or native deps.
  */
 import { describe, expect, it } from "bun:test";
+import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import {
 	type EntityCommand,
 	type EntityCommandDeps,
@@ -124,6 +125,23 @@ function makeHarness() {
 			record("autonomousStatus", id);
 			return auto as never;
 		},
+		promptAndWait: async (id, text) => {
+			record("promptAndWait", id, text);
+			const reply = { role: "assistant", content: [{ type: "text", text: `reply:${text}` }] };
+			return { messages: [reply], reply, closed: false, timedOut: false } as never;
+		},
+		daemonStatus: async () => {
+			record("daemonStatus");
+			return { running: true, pid: 4242, runtimeDir: "/rt", projectDir: "/p", sessions: [summary] } as never;
+		},
+		daemonShutdown: async force => {
+			record("daemonShutdown", force);
+			return { stopped: true, wasRunning: true, hadSessions: 1 };
+		},
+		daemonRestart: async () => {
+			record("daemonRestart");
+			return { restarted: true, previousPid: 4242, previousSessions: 1, pid: 4343 };
+		},
 		close: () => record("close"),
 	};
 
@@ -169,6 +187,16 @@ function makeHarness() {
 		readStdin: async () => {
 			record("readStdin");
 			return "";
+		},
+		loadTranscript: async name => {
+			record("loadTranscript", name);
+			const messages = [
+				{ role: "user", content: "first" },
+				{ role: "assistant", content: [{ type: "text", text: "one" }] },
+				{ role: "user", content: "second" },
+				{ role: "assistant", content: [{ type: "text", text: "two" }] },
+			] as unknown as AgentMessage[];
+			return { sessionFile: `/s/${name}.jsonl`, messages };
 		},
 	};
 
@@ -423,5 +451,82 @@ describe("runEntityCommand — errors + json", () => {
 		await run(cmd("spawn", ["phi"], { json: true }), h.deps);
 		const parsed = JSON.parse(h.out.join(""));
 		expect(parsed.id).toBe("sess-1");
+	});
+});
+
+describe("runEntityCommand — retrieval ergonomics + daemon lifecycle", () => {
+	it("accepts an entity NAME where a session id is expected (prompt)", async () => {
+		const h = makeHarness();
+		// The live session's entityName is "phi", id "sess-1": passing "phi" resolves to the id.
+		await run(cmd("prompt", ["phi", "hi"]), h.deps);
+		expect(h.calls).toContainEqual({ method: "prompt", args: ["sess-1", "hi"] });
+	});
+
+	it("resolves a unique id prefix to the full active-session id", async () => {
+		const h = makeHarness();
+		await run(cmd("stop", ["sess"]), h.deps);
+		expect(h.calls).toContainEqual({ method: "stop", args: ["sess-1"] });
+	});
+
+	it("prompt --wait blocks for the reply and prints the assistant text", async () => {
+		const h = makeHarness();
+		await run(cmd("prompt", ["sess-1", "ping"], { wait: true }), h.deps);
+		expect(h.calls).toContainEqual({ method: "promptAndWait", args: ["sess-1", "ping"] });
+		expect(h.out.join("")).toContain("reply:ping");
+		// The plain fire-and-forget prompt must NOT also fire.
+		expect(h.calls.some(c => c.method === "prompt")).toBe(false);
+	});
+
+	it("transcript dumps the entity's turns via loadTranscript", async () => {
+		const h = makeHarness();
+		await run(cmd("transcript", ["phi"], { last: 5 }), h.deps);
+		expect(h.calls).toContainEqual({ method: "loadTranscript", args: ["phi"] });
+		expect(h.out.join("")).toContain("phi — last 5 turns");
+	});
+
+	it("transcript --json emits the session file and turn slice", async () => {
+		const h = makeHarness();
+		await run(cmd("transcript", ["phi"], { last: 3, json: true }), h.deps);
+		const parsed = JSON.parse(h.out.join(""));
+		expect(parsed.entityName).toBe("phi");
+		expect(parsed.sessionFile).toBe("/s/phi.jsonl");
+		expect(parsed.turnCount).toBe(3);
+	});
+
+	it("transcript --last slices to the most recent N turns", async () => {
+		const h = makeHarness();
+		// The fake transcript has two user turns; --last 1 keeps only the second.
+		await run(cmd("transcript", ["phi"], { last: 1, json: true }), h.deps);
+		const parsed = JSON.parse(h.out.join(""));
+		expect(parsed.turnCount).toBe(1);
+		expect(parsed.messages).toHaveLength(2);
+		expect(parsed.messages[0].content).toBe("second");
+	});
+
+	it("daemon status reports liveness + resident sessions", async () => {
+		const h = makeHarness();
+		await run(cmd("daemon", ["status"]), h.deps);
+		expect(h.calls.some(c => c.method === "daemonStatus")).toBe(true);
+		expect(h.out.join("")).toContain("daemon running");
+		expect(h.calls.at(-1)).toEqual({ method: "close", args: [] });
+	});
+
+	it("daemon shutdown threads --force and reports the outcome", async () => {
+		const h = makeHarness();
+		await run(cmd("daemon", ["shutdown"], { force: true }), h.deps);
+		expect(h.calls).toContainEqual({ method: "daemonShutdown", args: [true] });
+		expect(h.out.join("")).toContain("daemon stopped");
+	});
+
+	it("daemon restart cycles the broker", async () => {
+		const h = makeHarness();
+		await run(cmd("daemon", ["restart"]), h.deps);
+		expect(h.calls.some(c => c.method === "daemonRestart")).toBe(true);
+		expect(h.out.join("")).toContain("daemon restarted");
+	});
+
+	it("rejects an unknown daemon subcommand", async () => {
+		const h = makeHarness();
+		await expect(run(cmd("daemon", ["frob"]), h.deps)).rejects.toBeInstanceOf(EntityCommandUsageError);
 	});
 });
