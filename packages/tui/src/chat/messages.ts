@@ -301,6 +301,10 @@ export interface AdvisorNote {
 	turn?: number;
 	/** Primary turns elapsed before merged-batch delivery. */
 	turnsAgo?: number;
+	/** Entity display glyph, when the advisor maps to a registry entity. */
+	icon?: string;
+	/** Entity theme-color token, when the advisor maps to a registry entity. */
+	color?: string;
 }
 
 /** Details payload on the batched `advisor` custom message rendered in the transcript. */

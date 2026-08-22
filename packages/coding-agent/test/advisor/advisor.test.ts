@@ -6931,6 +6931,7 @@ describe("advisor", () => {
 			expect(text).toContain("truncated.");
 		});
 
+<<<<<<< HEAD
 		it("caps collapsed note rows at advisorCollapsedLines and shows every row when expanded", async () => {
 			const uiTheme = await getThemeByName("dark");
 			if (!uiTheme) throw new Error("theme unavailable");
@@ -6947,6 +6948,35 @@ describe("advisor", () => {
 			} finally {
 				setChatTranscriptDisplayPreferences({ advisorCollapsedLines: 0 });
 			}
+=======
+		it("renders the entity glyph, tinted label, and bubble background for an icon/color note", async () => {
+			const uiTheme = await getThemeByName("dark");
+			if (!uiTheme) throw new Error("theme unavailable");
+			const card = createAdvisorMessageCard(
+				{ notes: [{ note: "route that to a specialist", advisor: "phi", icon: "🔷", color: "accent" }] },
+				() => true,
+				uiTheme,
+			);
+			const raw = card.render(80).join("\n");
+			expect(raw).toContain("🔷");
+			expect(strip([raw])).toContain("phi");
+			// Label is tinted with the entity color and the note sits in a tinted bubble.
+			expect(raw).toContain(uiTheme.getFgAnsi("accent"));
+			expect(raw).toContain(uiTheme.getBubbleBgAnsi("accent"));
+		});
+
+		it("leaves an entity-less note unstyled (no bubble background)", async () => {
+			const uiTheme = await getThemeByName("dark");
+			if (!uiTheme) throw new Error("theme unavailable");
+			const card = createAdvisorMessageCard(
+				{ notes: [{ note: "plain note", advisor: "Architecture" }] },
+				() => true,
+				uiTheme,
+			);
+			const raw = card.render(80).join("\n");
+			expect(raw).not.toContain(uiTheme.getBubbleBgAnsi("accent"));
+			expect(strip([raw])).toContain("[Architecture]");
+>>>>>>> ad0f06e720 (feat(oma/entity): per-entity icon & color across in-process and daemon-wire surfaces)
 		});
 	});
 

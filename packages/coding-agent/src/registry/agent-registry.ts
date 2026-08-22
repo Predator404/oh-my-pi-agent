@@ -68,6 +68,10 @@ export interface AgentRef {
 	/** Unique per ref object, minted by the owning registry; `register`/`reopen` mint a new one. */
 	readonly generation: number;
 	displayName: string;
+	/** Optional display glyph for an entity-backed agent (empty for plain sub/main). */
+	icon?: string;
+	/** Optional theme-color token tinting the agent's label/marker. */
+	color?: string;
 	kind: AgentKind;
 	parentId?: string;
 	status: AgentStatus;
@@ -115,6 +119,8 @@ export type RegistryListener = (event: RegistryEvent) => void;
 export interface RegisterInput {
 	id: string;
 	displayName: string;
+	icon?: string;
+	color?: string;
 	kind: AgentKind;
 	parentId?: string;
 	session: AgentSessionHandle | null;
@@ -220,6 +226,8 @@ export class AgentRegistry implements AgentRegistryApi {
 			id: input.id,
 			generation: ++this.#generation,
 			displayName: input.displayName,
+			icon: input.icon,
+			color: input.color,
 			kind: input.kind,
 			parentId: input.parentId,
 			status: input.status ?? "running",

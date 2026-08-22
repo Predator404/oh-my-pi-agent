@@ -12,6 +12,7 @@ import { parseThinkingLevel } from "../thinking";
 import { TRUNCATE_LENGTHS, truncateToWidth } from "../render/render-utils";
 import { sanitizeDisplaySingleLine } from "./extensions/display-text";
 import type { ObservableSession } from "./session-observer-registry";
+import { isValidThemeColor } from "../theme/schema";
 import { theme } from "../theme/theme";
 import type { AgentMetrics } from "./agent-hub-projection";
 
@@ -37,6 +38,17 @@ export function sanitizeLine(text: string, maxWidth?: number): string {
 
 export function clampHubLine(line: string, width: number): string {
 	return truncateToWidth(line.replace(/[\r\n]+/g, " "), Math.max(1, width), Ellipsis.Omit);
+}
+
+/**
+ * Colored display glyph for an entity-backed agent, honoring the `icon` field,
+ * the `color` token (validated), and the ascii symbol preset (glyph dropped so
+ * the tint still carries identity). Returns "" for plain sub/main agents.
+ */
+export function entityGlyph(ref: AgentRecordLike): string {
+	if (!ref.icon || theme.getSymbolPreset() === "ascii") return "";
+	const glyph = sanitizeDisplaySingleLine(ref.icon);
+	return ref.color && isValidThemeColor(ref.color) ? theme.fg(ref.color, glyph) : glyph;
 }
 
 /** Semantic tone of each roster status; shared by the ANSI glyphs and native spans. */

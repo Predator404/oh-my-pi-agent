@@ -5,6 +5,7 @@ import type { AdvisorMessageDetails, AdvisorNote, AdvisorSeverity } from "./mess
 import { chatTranscriptDisplayPreferences } from "./display-preferences";
 import { formatBadge, replaceTabs, type ToolUIColor, wrapTextWithAnsi } from "../render/render-utils";
 import { Ellipsis, truncateToWidth } from "../render";
+import { isValidThemeColor } from "../theme/schema";
 import type { Theme } from "../theme";
 import type { TspSpan, TspTone } from "@oh-my-pi/pi-wire";
 import { card, node, span, text } from "../native/describe";
@@ -119,12 +120,26 @@ function sourceOf(entry: AdvisorNote): string | undefined {
 
 /** Wrapped, truncated rail rows for a single note; shared by both branches. */
 function renderAdvisorNote(entry: AdvisorNote, width: number, uiTheme: Theme): string[] {
+	const color = entry.color && isValidThemeColor(entry.color) ? entry.color : undefined;
+	const glyph = entry.icon && uiTheme.getSymbolPreset() !== "ascii" ? `${entry.icon} ` : "";
+	const bubbleBg = color ? uiTheme.getBubbleBgAnsi(color) : undefined;
 	const badge = entry.severity ? `${formatBadge(entry.severity, severityColor(entry.severity), uiTheme)} ` : "";
+<<<<<<< HEAD
 	const source = sourceOf(entry);
 	const who = source ? `${uiTheme.fg("dim", `[${replaceTabs(source)}]`)} ` : "";
 	const age = entry.turnsAgo !== undefined ? `${uiTheme.fg("dim", `T-${entry.turnsAgo}`)} ` : "";
+=======
+	// Multi-advisor: attribute the note to its source, using the entity's
+	// glyph + color when the advisor maps to a registry entity. The implicit
+	// single ("default") advisor renders unlabeled, as before.
+	let who = "";
+	if (entry.advisor && entry.advisor !== "default") {
+		const label = `${glyph}${replaceTabs(entry.advisor)}`;
+		who = color ? `${uiTheme.fg(color, uiTheme.bold(label))} ` : `${uiTheme.fg("dim", `[${label}]`)} `;
+	}
+>>>>>>> ad0f06e720 (feat(oma/entity): per-entity icon & color across in-process and daemon-wire surfaces)
 	const railGlyph = uiTheme.symbol("advisor.rail");
-	const rail = uiTheme.fg(severityColor(entry.severity), railGlyph);
+	const rail = color ? uiTheme.fg(color, railGlyph) : uiTheme.fg(severityColor(entry.severity), railGlyph);
 	const quoteWidth = visibleWidth(`  ${railGlyph} `);
 	const badgeWidth = visibleWidth(badge);
 	const ageWidth = visibleWidth(age);
@@ -143,10 +158,21 @@ function renderAdvisorNote(entry: AdvisorNote, width: number, uiTheme: Theme): s
 		}
 	}
 
+<<<<<<< HEAD
 	return bodyLines.map(
 		(line, index) =>
 			`  ${rail} ${index === 0 ? `${badge}${age}${who}` : ""}${uiTheme.fg("customMessageText", replaceTabs(line))}`,
 	);
+=======
+	const bubbleWidth = Math.min(NOTE_LINE_WIDTH, width);
+	return bodyLines.map((line, index) => {
+		const prefix = index === 0 ? `${badge}${who}` : "";
+		const content = `  ${rail} ${prefix}${uiTheme.fg("customMessageText", replaceTabs(line))}`;
+		if (!bubbleBg) return content;
+		const pad = " ".repeat(Math.max(0, bubbleWidth - visibleWidth(content)));
+		return `${bubbleBg}${content}${pad}\x1b[49m`;
+	});
+>>>>>>> ad0f06e720 (feat(oma/entity): per-entity icon & color across in-process and daemon-wire surfaces)
 }
 
 /** A note's rank in the native callout: its severity, `note` when it has none. */

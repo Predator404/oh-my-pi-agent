@@ -27,6 +27,10 @@ import type { EntityRole } from "./schema";
 export interface CreateEntityFields {
 	role: EntityRole;
 	description: string;
+	/** Optional single display glyph marking this entity in the UI. */
+	icon?: string;
+	/** Optional theme-color token tinting this entity's label/marker. */
+	color?: string;
 	/** System-prompt body (identity/voice/remit). Required, non-empty. */
 	systemPrompt: string;
 	model?: string[];
@@ -77,6 +81,8 @@ export async function createEntityRecord(
 		description: fields.description,
 		role: fields.role,
 	};
+	if (fields.icon) frontmatter.icon = fields.icon;
+	if (fields.color) frontmatter.color = fields.color;
 	if (fields.model?.length) frontmatter.model = fields.model;
 	if (fields.thinkingLevel) frontmatter.thinkingLevel = fields.thinkingLevel;
 	if (fields.tools?.length) frontmatter.tools = fields.tools;
@@ -142,6 +148,8 @@ export function applyEntityFieldUpdate(frontmatter: Record<string, unknown>, key
 		case "role":
 		case "thinkingLevel":
 		case "vaultSection":
+		case "icon":
+		case "color":
 			frontmatter[key] = value;
 			return;
 		case "thinking":

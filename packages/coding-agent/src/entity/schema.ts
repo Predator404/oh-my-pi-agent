@@ -13,9 +13,10 @@
  * autoloadSkills, thinkingLevel. New/formalized C1 fields: role, memory,
  * vaultSection, watchdog, hosting.
  */
+import type { ThemeColor } from "@oh-my-pi/pi-tui/theme";
+import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 import type { AdvisorConfig } from "../advisor/config";
 import type { AgentSource } from "../task/types";
-import type { ConfiguredThinkingLevel } from "../thinking";
 
 /**
  * Formal role enum. Drives the memory-retention policy, not the capability
@@ -74,6 +75,10 @@ export interface EntityRecordMeta {
 	name: string;
 	description: string;
 	role: EntityRole;
+	/** Optional single display glyph (emoji or char) marking this entity in the UI. */
+	icon?: string;
+	/** Optional theme-color token tinting this entity's label/marker. */
+	color?: ThemeColor;
 	/** OMP model selector list (per-entity; may target a local endpoint). */
 	model?: string[];
 	thinkingLevel?: ConfiguredThinkingLevel;
@@ -114,6 +119,8 @@ export interface ResolvedEntityConfig {
 	name: string;
 	description: string;
 	role: EntityRole;
+	icon?: string;
+	color?: ThemeColor;
 	model?: string[];
 	thinkingLevel?: ConfiguredThinkingLevel;
 	systemPrompt: string;
