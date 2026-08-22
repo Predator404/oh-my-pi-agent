@@ -8,6 +8,14 @@ import {
 } from "../index";
 import { formatKeyHints, type KeybindingsManager } from "../app-keybindings";
 import { applyEmojiCompletion, getEmojiSuggestions, isEmojiPrefix, tryEmojiInlineReplace } from "./emoji-autocomplete";
+import {
+	applyEntityMentionCompletion,
+	collapseMentionToSingleAt,
+	type EntityMentionCandidateSource,
+	extractEntityMention,
+	getEntityMentionSuggestions,
+	isEntityMentionPrefix,
+} from "./entity-autocomplete";
 import { getGithubRefContext, getGithubRefSuggestions } from "./github-ref-autocomplete";
 import {
 	applyInternalUrlCompletion,
@@ -52,6 +60,8 @@ interface PromptActionAutocompleteOptions {
 	internalUrlCaller?: () => InternalUrlCallerContext;
 	/** Session-scoped models available for `^` mentions. */
 	modelMentions?: ModelMentionCandidateSource;
+	/** Host-supplied roster for `@@` entity mentions. */
+	entityMentions?: EntityMentionCandidateSource;
 	keybindings: KeybindingsManager;
 	copyCurrentLine: () => void;
 	copyPrompt: () => void;
@@ -114,6 +124,7 @@ export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 	#actions: PromptActionDefinition[];
 	#internalUrlCaller: () => InternalUrlCallerContext;
 	#modelMentions: ModelMentionCandidateSource | undefined;
+	#entityMentions: EntityMentionCandidateSource | undefined;
 
 	constructor(
 		commands: SlashCommand[],
@@ -122,11 +133,13 @@ export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 		commandUsage?: (name: string) => number,
 		internalUrlCaller?: () => InternalUrlCallerContext,
 		modelMentions?: ModelMentionCandidateSource,
+		entityMentions?: EntityMentionCandidateSource,
 	) {
 		this.#commands = commands;
 		this.#baseProvider = new CombinedAutocompleteProvider(commands, basePath, { commandUsage });
 		this.#internalUrlCaller = internalUrlCaller ?? (() => ({ cwd: basePath }));
 		this.#modelMentions = modelMentions;
+		this.#entityMentions = entityMentions;
 		this.#actions = actions;
 	}
 
@@ -205,6 +218,27 @@ export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 			if (emojiSuggestions) return emojiSuggestions;
 		}
 
+// `@@` opens the entity (persona/agent) picker; `@@@`+ is the escape hatch
+		// back to the file picker with a single `@` populated. A bare `@` stays the
+		// base provider's file mention, so only `@@`+ is intercepted here.
+		const entityMention = extractEntityMention(textBeforeCursor);
+		if (entityMention?.atCount === 2) {
+			const items = await getEntityMentionSuggestions(entityMention, this.#entityMentions);
+			// No match closes the picker rather than falling through to file search.
+			return items.length > 0 ? { items, prefix: entityMention.token } : null;
+		}
+		if (entityMention && entityMention.atCount >= 3) {
+			const collapsed = collapseMentionToSingleAt(lines, cursorLine, cursorCol, entityMention);
+			const fileSuggestions = await this.#baseProvider.getSuggestions(
+				collapsed.lines,
+				cursorLine,
+				collapsed.cursorCol,
+			);
+			// Accept-time apply replaces the whole `@@@…` run with the single-`@`
+			// file value, so the returned prefix is the live token, not the collapse.
+			return fileSuggestions ? { items: fileSuggestions.items, prefix: entityMention.token } : null;
+		}
+
 		return this.#baseProvider.getSuggestions(lines, cursorLine, cursorCol, signal);
 	}
 
@@ -254,6 +288,11 @@ export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 
 		if (isEmojiPrefix(prefix)) {
 			return applyEmojiCompletion(lines, cursorLine, cursorCol, item, prefix);
+		}
+		// `@@`+ items (entity picks and the `@@@` file escape) both replace the
+		// live `@`-run with the item's final value.
+		if (isEntityMentionPrefix(prefix)) {
+			return applyEntityMentionCompletion(lines, cursorLine, cursorCol, item, prefix);
 		}
 		return this.#baseProvider.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
 	}
@@ -333,5 +372,6 @@ export function createPromptActionAutocompleteProvider(
 		options.commandUsage,
 		options.internalUrlCaller,
 		options.modelMentions,
+		options.entityMentions,
 	);
 }
