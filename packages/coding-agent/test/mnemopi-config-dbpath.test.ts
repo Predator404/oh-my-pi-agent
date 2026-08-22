@@ -1,5 +1,5 @@
-import * as path from "node:path";
 import { describe, expect, it } from "bun:test";
+import * as path from "node:path";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { loadMnemopiConfig } from "@oh-my-pi/pi-coding-agent/mnemopi/config";
 import { getMemoriesDir } from "@oh-my-pi/pi-utils";
