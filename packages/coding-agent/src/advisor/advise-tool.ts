@@ -96,6 +96,10 @@ export function isAdvisorInterruptImmuneTurnActive(opts: {
  *
  * - A `preserveOnly` caller records every note that arrives while the primary
  *   is idle as a visible card and never starts a new primary turn.
+ * - A direct-address answer (`directAddress`) is a response the user explicitly
+ *   asked for, so it must surface regardless of severity: steered into a live
+ *   turn, or preserved as a visible card when idle — never dropped onto the
+ *   idle-suppressed aside queue where it would strand until the next prompt.
  * - A non-interrupting `nit` always rides the non-interrupting aside queue.
  * - An interrupting `concern`/`blocker` is normally steered into the agent: into
  *   the live turn while one is streaming, or (when idle) a triggered turn so the
@@ -127,7 +131,13 @@ export function resolveAdvisorDeliveryChannel(opts: {
 	terminalAnswerNoQueuedWork?: boolean;
 	interruptImmuneTurnActive?: boolean;
 	preserveOnly?: boolean;
+	directAddress?: boolean;
 }): AdvisorDeliveryChannel {
+	// First, so an explicit user question always surfaces. Safe over `preserveOnly`:
+	// that flag is only set by the headless drain AFTER the primary loop stops
+	// streaming, so a pending direct address there resolves to `preserve` anyway —
+	// a `steer` is only produced while a turn is genuinely live.
+	if (opts.directAddress) return opts.streaming ? "steer" : "preserve";
 	if (opts.preserveOnly && !opts.streaming) return "preserve";
 	if (!isInterruptingSeverity(opts.severity)) return "aside";
 	if (opts.autoResumeSuppressed && (opts.aborting || !opts.streaming)) return "preserve";

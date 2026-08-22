@@ -5646,6 +5646,30 @@ describe("advisor", () => {
 				).toBe("steer");
 			}
 		});
+
+		it("surfaces a direct-address answer regardless of severity: preserve when idle, steer when streaming (the fix)", () => {
+			for (const severity of [undefined, "nit", "concern", "blocker"] as const) {
+				expect(
+					resolveAdvisorDeliveryChannel({
+						severity,
+						autoResumeSuppressed: false,
+						streaming: false,
+						aborting: false,
+						terminalAnswerNoQueuedWork: true,
+						directAddress: true,
+					}),
+				).toBe("preserve");
+				expect(
+					resolveAdvisorDeliveryChannel({
+						severity,
+						autoResumeSuppressed: false,
+						streaming: true,
+						aborting: false,
+						directAddress: true,
+					}),
+				).toBe("steer");
+			}
+		});
 	});
 	describe("advisor transcript filenames", () => {
 		it("derives default and named transcript filenames", () => {

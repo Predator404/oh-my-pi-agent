@@ -6,6 +6,7 @@
 
 - Blank or whitespace-only `mnemopi.dbPath` now resolves to persistent agent storage instead of a volatile in-memory bank ([#9360](https://github.com/can1357/oh-my-pi/issues/9360)).
 - Async speculative compaction no longer drops user or tool turns added while the summary was in flight ([#9351](https://github.com/can1357/oh-my-pi/issues/9351)).
+- Directly addressing an advisor (`@@<name>: ...`) now reliably surfaces the reply even when it carries no severity, instead of stranding the answer on the idle aside queue until the next prompt.
 
 ## [18.0.0] - 2026-08-22
 
