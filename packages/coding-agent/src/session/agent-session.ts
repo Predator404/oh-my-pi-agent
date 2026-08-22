@@ -5800,18 +5800,24 @@ export class AgentSession {
 			if ((this.#isDisposed && !disposingBeforeTransition) || this.#promptGeneration !== generation) return false;
 			const beforeAgentStartSystemPrompt = await this.#buildSystemPromptForAgentStart(expandedText);
 
-			// Direct advisor address (`@@<name>: ...`): when a live advisor answers
-			// to the addressed name, defer this turn to it — the advisor observes
-			// the conversation and answers the question directly. Real user turns
-			// only; synthetic/agent-initiated prompts never re-route.
-			if (message.role === "user" && this.#advisors.isAdvisorActive()) {
+			// Direct advisor address (`@@<name>: ...`): defer this turn to the named
+			// advisor, which observes the conversation and answers directly. When no
+			// live advisor answers to the name, attach it from the OMA entity registry
+			// (starting the advisor subsystem if it was off) so a first-time address
+			// brings the entity online. Real user turns only; synthetic/agent-initiated
+			// prompts never re-route.
+			if (message.role === "user") {
 				const address = parseAdvisorAddress(expandedText);
-				const advisorName = address ? this.#advisors.resolveAddressedAdvisor(address.name) : undefined;
-				if (advisorName) {
-					beforeAgentStartSystemPrompt.push(primaryDeferralInstruction(advisorName));
-					// Force the addressed advisor's answer to surface even when the primary
-					// defers and goes idle, instead of stranding on the aside queue.
-					this.#advisors.markDirectAddress(advisorName);
+				if (address) {
+					const advisorName =
+						this.#advisors.resolveAddressedAdvisor(address.name) ??
+						(await this.#advisors.attachAddressedEntity(address.name));
+					if (advisorName) {
+						beforeAgentStartSystemPrompt.push(primaryDeferralInstruction(advisorName));
+						// Force the addressed advisor's answer to surface even when the primary
+						// defers and goes idle, instead of stranding on the aside queue.
+						this.#advisors.markDirectAddress(advisorName);
+					}
 				}
 			}
 
@@ -9595,6 +9601,17 @@ export class AgentSession {
 	 */
 	applyAdvisorConfigs(advisors: AdvisorConfig[], sharedInstructions: string | undefined): number {
 		return this.#advisors.applyAdvisorConfigs(advisors, sharedInstructions);
+	}
+
+	/**
+	 * Attach an OMA registry entity as a live advisor by the name used in a
+	 * `@@<name>:` address, starting the advisor subsystem if it was off. Returns
+	 * the canonical advisor name once it is live, else `undefined`. Delegates to
+	 * {@link SessionAdvisors.attachAddressedEntity}; the submit path calls the
+	 * controller directly.
+	 */
+	attachAddressedAdvisor(name: string): Promise<string | undefined> {
+		return this.#advisors.attachAddressedEntity(name);
 	}
 
 	/**

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Typing `@@` in the prompt now opens an entity (persona/agent) picker over the OMA registry and inserts a `@@<name>: ` address; `@@@` falls back to the file picker with a single `@` populated, and a single `@` still opens the file picker.
+- Directly addressing an entity (`@@<name>: ...`) that has no live advisor now attaches it from the entity registry as an advisor, starting the advisor subsystem if it was off.
+
 ### Fixed
 
 - Blank or whitespace-only `mnemopi.dbPath` now resolves to persistent agent storage instead of a volatile in-memory bank ([#9360](https://github.com/can1357/oh-my-pi/issues/9360)).
