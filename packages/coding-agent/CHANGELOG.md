@@ -4,8 +4,8 @@
 
 ### Added
 
-- Typing `@@` in the prompt now opens an entity (persona/agent) picker over the OMA registry and inserts a `@@<name>: ` address; `@@@` falls back to the file picker with a single `@` populated, and a single `@` still opens the file picker.
-- Directly addressing an entity (`@@<name>: ...`) that has no live advisor now attaches it from the entity registry as an advisor, starting the advisor subsystem if it was off.
+- Typing `@@` at the start of a prompt now opens an entity (persona/agent) picker over the OMA registry and inserts a `@@<name>: ` address; `@@@` falls back to the file picker with a single `@` populated, and a single `@` still opens the file picker. The picker only triggers at message start, matching where a `@@<name>:` address routes.
+- Directly addressing an entity (`@@<name>: ...`) that has no live advisor now attaches it from the entity registry as an advisor — preserving the entity's configured thinking level — and starts the advisor subsystem if it was off.
 
 ### Fixed
 

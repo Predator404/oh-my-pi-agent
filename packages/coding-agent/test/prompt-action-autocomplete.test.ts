@@ -346,5 +346,12 @@ describe("prompt action autocomplete", () => {
 			expect(suggestions?.items.some(i => i.value === "@README.md")).toBe(true);
 			expect(suggestions?.items.some(i => i.value === "@@phi: ")).toBe(false);
 		});
+
+		it("does not open the entity picker mid-message", async () => {
+			// `@@` past the start of the message is not an address; the picker must
+			// not offer entities there (matches parseAdvisorAddress's leading anchor).
+			const suggestions = await provider().getSuggestions(["ask @@ph"], 0, 8);
+			expect(suggestions?.items.some(i => i.value === "@@phi: ")).not.toBe(true);
+		});
 	});
 });
