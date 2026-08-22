@@ -46,7 +46,8 @@ import type {
 	AgentScheduleSpec,
 	AgentSessionSummary,
 } from "./control-protocol";
-import type { ResidentSession } from "./resident-session";
+import type { PromptInjector } from "./prompt-injector";
+import { SessionPromptInjector, type ResidentSession } from "./resident-session";
 import type { BrokerToWorker, WorkerSideLink } from "./worker-transport";
 
 /**
@@ -86,6 +87,13 @@ export interface AgentWorkerOptions {
 	/** Invoked after a clean shutdown so the host can release the lease + exit. */
 	onStopped?: () => void | Promise<void>;
 	now?: () => number;
+	/**
+	 * The single session touchpoint for prompt delivery. Defaults to a
+	 * {@link SessionPromptInjector} over {@link session}; the scheduler already
+	 * uses the same seam, so C4 prompt/steer/follow_up wake an idle session the
+	 * exact same way scheduled/heartbeat/goal injections do (SPEC §8.2).
+	 */
+	injector?: PromptInjector;
 }
 
 export class AgentWorker {
@@ -98,6 +106,7 @@ export class AgentWorker {
 	readonly #generation: string;
 	readonly #onStopped?: () => void | Promise<void>;
 	readonly #now: () => number;
+	readonly #injector: PromptInjector;
 	readonly #unsubscribers: Array<() => void> = [];
 	#cursorSeq = 0;
 	#authGate = Promise.withResolvers<void>();
@@ -113,6 +122,7 @@ export class AgentWorker {
 		this.#generation = options.generation;
 		this.#onStopped = options.onStopped;
 		this.#now = options.now ?? Date.now;
+		this.#injector = options.injector ?? new SessionPromptInjector(options.session);
 	}
 
 	/** Authenticate, wire event streaming + scheduling, and announce readiness. */
@@ -188,26 +198,12 @@ export class AgentWorker {
 
 	async #dispatch(command: AgentControlCommand): Promise<AgentControlResult> {
 		switch (command.type) {
-			case "prompt": {
-				// A fresh turn must not block the control response on turn completion;
-				// fire it and report acceptance. Errors surface on the event stream.
-				if (this.#session.isStreaming()) {
-					await this.#session.followUp(command.text);
-				} else {
-					void this.#session.prompt(command.text).catch(error =>
-						logger.warn("resident prompt failed", {
-							error: error instanceof Error ? error.message : String(error),
-						}),
-					);
-				}
-				return { type: "prompt", ok: true, accepted: true };
-			}
+			case "prompt":
+				return { type: "prompt", ok: true, accepted: await this.#inject(command.text, "follow_up") };
 			case "steer":
-				await this.#session.steer(command.text);
-				return { type: "steer", ok: true, accepted: true };
+				return { type: "steer", ok: true, accepted: await this.#inject(command.text, "steer") };
 			case "follow_up":
-				await this.#session.followUp(command.text);
-				return { type: "follow_up", ok: true, accepted: true };
+				return { type: "follow_up", ok: true, accepted: await this.#inject(command.text, "follow_up") };
 			case "attach":
 				return { type: "attach", ok: true, result: this.#buildAttachResult(command.id) };
 			case "send_message": {
@@ -268,6 +264,35 @@ export class AgentWorker {
 					error: { code: "invalid_command", message: `worker cannot handle ${command.type}` },
 				};
 		}
+	}
+
+	/**
+	 * Deliver a C4 prompt/steer/follow_up through the injector seam — the same
+	 * touchpoint scheduled/heartbeat/goal injections use, so an idle detached
+	 * worker wakes and starts a turn regardless of the command variant. Using
+	 * the injector fixes the follow_up-on-idle wake gap: a bare `session.followUp`
+	 * only auto-continues from an assistant/toolResult tail, so on a fresh idle
+	 * session it enqueues without ever starting a turn. The injector's idle path
+	 * uses `session.prompt`, which unconditionally starts the turn.
+	 *
+	 * Busy target: `injectPrompt` resolves as soon as the message is steered/
+	 * queued, so await it and report the real acceptance. Idle target: the woken
+	 * turn runs inline inside `injectPrompt` and resolves only when it completes,
+	 * so the C4 control response MUST NOT block on it — start it detached (turn
+	 * progress is observable via the status/message event stream wired in start())
+	 * and report acceptance immediately, surfacing a start failure on the log.
+	 */
+	async #inject(text: string, whenBusy: AgentDeliveryMode): Promise<boolean> {
+		if (this.#injector.isBusy()) {
+			const outcome = await this.#injector.injectPrompt(text, { whenBusy });
+			return outcome !== "skipped";
+		}
+		void this.#injector.injectPrompt(text, { whenBusy }).catch(error =>
+			logger.warn("resident prompt injection failed", {
+				error: error instanceof Error ? error.message : String(error),
+			}),
+		);
+		return true;
 	}
 
 	#buildAttachResult(id: ActiveSessionId) {
