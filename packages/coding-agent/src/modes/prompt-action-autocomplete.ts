@@ -217,23 +217,31 @@ export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 
 		// `@@` opens the entity (persona/agent) picker; `@@@`+ is the escape hatch
 		// back to the file picker with a single `@` populated. A bare `@` stays the
-		// base provider's file mention, so only `@@`+ is intercepted here.
+		// base provider's file mention, so only `@@`+ is intercepted here — and only
+		// at message start, matching `parseAdvisorAddress`, which routes an address
+		// only when it leads the message. A mid-message `@@` falls through to files.
 		const entityMention = extractEntityMention(textBeforeCursor);
-		if (entityMention?.atCount === 2) {
-			const items = await getEntityMentionSuggestions(entityMention);
-			// No match closes the picker rather than falling through to file search.
-			return items.length > 0 ? { items, prefix: entityMention.token } : null;
-		}
-		if (entityMention && entityMention.atCount >= 3) {
-			const collapsed = collapseMentionToSingleAt(lines, cursorLine, cursorCol, entityMention);
-			const fileSuggestions = await this.#baseProvider.getSuggestions(
-				collapsed.lines,
-				cursorLine,
-				collapsed.cursorCol,
-			);
-			// Accept-time apply replaces the whole `@@@…` run with the single-`@`
-			// file value, so the returned prefix is the live token, not the collapse.
-			return fileSuggestions ? { items: fileSuggestions.items, prefix: entityMention.token } : null;
+		const atMessageStart =
+			entityMention !== null &&
+			!hasPromptTextBeforeCursorLine &&
+			textBeforeCursor.slice(0, textBeforeCursor.length - entityMention.token.length).trim() === "";
+		if (entityMention && atMessageStart) {
+			if (entityMention.atCount === 2) {
+				const items = await getEntityMentionSuggestions(entityMention);
+				// No match closes the picker rather than falling through to file search.
+				return items.length > 0 ? { items, prefix: entityMention.token } : null;
+			}
+			if (entityMention.atCount >= 3) {
+				const collapsed = collapseMentionToSingleAt(lines, cursorLine, cursorCol, entityMention);
+				const fileSuggestions = await this.#baseProvider.getSuggestions(
+					collapsed.lines,
+					cursorLine,
+					collapsed.cursorCol,
+				);
+				// Accept-time apply replaces the whole `@@@…` run with the single-`@`
+				// file value, so the returned prefix is the live token, not the collapse.
+				return fileSuggestions ? { items: fileSuggestions.items, prefix: entityMention.token } : null;
+			}
 		}
 
 		return this.#baseProvider.getSuggestions(lines, cursorLine, cursorCol);

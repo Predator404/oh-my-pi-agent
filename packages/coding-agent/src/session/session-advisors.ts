@@ -1782,9 +1782,23 @@ export class SessionAdvisors {
 			return undefined;
 		}
 
+		// AdvisorConfig carries no thinking field; the advisor descriptor reads
+		// effort from the model selector's `:level` suffix. Fold the entity's
+		// standalone thinkingLevel into the selector when it has no explicit suffix
+		// or routing, so an attached persona keeps its configured effort.
+		const baseSelector = resolved.model?.[0];
+		const level = concreteThinkingLevel(resolved.thinkingLevel);
+		const modelSelector =
+			baseSelector !== undefined &&
+			level !== undefined &&
+			level !== ThinkingLevel.Inherit &&
+			!baseSelector.includes(":") &&
+			!baseSelector.includes("@")
+				? `${baseSelector}:${level}`
+				: baseSelector;
 		const config: AdvisorConfig = {
 			name: resolved.name,
-			model: resolved.model?.[0],
+			model: modelSelector,
 			tools: resolved.tools,
 			instructions: resolved.systemPrompt,
 			enabled: true,
