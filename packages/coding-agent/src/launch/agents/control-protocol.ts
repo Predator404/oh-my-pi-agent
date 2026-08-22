@@ -129,7 +129,7 @@ export interface AgentAutonomousSpec {
 
 export type AgentControlCommand =
 	// Lifecycle -------------------------------------------------------------
-	| { type: "spawn"; entityName: string; cwd?: string }
+	| { type: "spawn"; entityName: string; cwd?: string; force?: boolean }
 	| { type: "attach"; id: ActiveSessionId; capabilities?: AgentClientCapability[]; resume?: AgentEventCursor }
 	| { type: "detach"; id: ActiveSessionId }
 	| { type: "list" }
