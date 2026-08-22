@@ -6796,6 +6796,9 @@ export class AgentSession {
 		if (message.role === "user" && this.#advisors.isAdvisorActive()) {
 			const address = parseAdvisorAddress(prompt);
 			advisorDeferralName = address ? this.#advisors.resolveAddressedAdvisor(address.name) : undefined;
+			// Force the addressed advisor's answer to surface even when the primary
+			// defers and goes idle, instead of stranding on the aside queue.
+			if (advisorDeferralName) this.#advisors.markDirectAddress(advisorDeferralName);
 		}
 		for (let attempt = 0; attempt < AGENT_START_POLICY_MAX_ATTEMPTS; attempt++) {
 			await this.#memory.transition;
