@@ -8972,15 +8972,20 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 				logger.debug("Turn started before MCP discovery finished", { error: String(error) });
 			});
 		}
-		// Direct advisor address (`@@<name>: ...`): when a live advisor answers to
-		// the addressed name, defer this turn to it via a turn-scoped system-prompt
-		// override — the advisor observes the conversation and answers the question
-		// directly. Real user turns only; synthetic/agent-initiated prompts never
-		// re-route.
+		// Direct advisor address (`@@<name>: ...`): defer this turn to the named
+		// advisor via a turn-scoped system-prompt override, so the advisor observes
+		// the conversation and answers directly. When no live advisor answers to the
+		// name, attach it from the OMA entity registry (starting the advisor
+		// subsystem if it was off) so a first-time address brings the entity online.
+		// Real user turns only; synthetic/agent-initiated prompts never re-route.
 		let advisorDeferralName: string | undefined;
-		if (message.role === "user" && this.#advisors.isAdvisorActive()) {
+		if (message.role === "user") {
 			const address = parseAdvisorAddress(prompt);
-			advisorDeferralName = address ? this.#advisors.resolveAddressedAdvisor(address.name) : undefined;
+			if (address) {
+				advisorDeferralName =
+					this.#advisors.resolveAddressedAdvisor(address.name) ??
+					(await this.#advisors.attachAddressedEntity(address.name));
+			}
 			// Force the addressed advisor's answer to surface even when the primary
 			// defers and goes idle, instead of stranding on the aside queue.
 			if (advisorDeferralName) this.#advisors.markDirectAddress(advisorDeferralName);
@@ -15610,6 +15615,17 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		sharedMaxNotesPerUpdate?: number,
 	): number {
 		return this.#advisors.applyAdvisorConfigs(advisors, sharedInstructions, sharedMaxNotesPerUpdate);
+	}
+
+	/**
+	 * Attach an OMA registry entity as a live advisor by the name used in a
+	 * `@@<name>:` address, starting the advisor subsystem if it was off. Returns
+	 * the canonical advisor name once it is live, else `undefined`. Delegates to
+	 * {@link SessionAdvisors.attachAddressedEntity}; the submit path calls the
+	 * controller directly.
+	 */
+	attachAddressedAdvisor(name: string): Promise<string | undefined> {
+		return this.#advisors.attachAddressedEntity(name);
 	}
 
 	/**
