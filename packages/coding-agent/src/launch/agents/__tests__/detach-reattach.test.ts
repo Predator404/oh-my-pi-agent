@@ -346,4 +346,35 @@ describe("detach / reattach round-trip", () => {
 		expect(second.id).toBe(first.id);
 		expect(supervisor.listSessions()).toHaveLength(1);
 	});
+
+	test("spawning an already-live entity fails fast with session_already_active", async () => {
+		const { supervisor } = makeSupervisor();
+		const client = new RecordingClient("A");
+		const first = await supervisor.handle(envelope({ type: "spawn", entityName: "phi" }, "A", "s1"), client);
+		if (first.type !== "spawn" || first.ok !== true) throw new Error("spawn failed");
+		// A distinct command id (not a journal replay) still fast-fails instead of
+		// spawning a second worker that would block on the session lease.
+		const second = await supervisor.handle(envelope({ type: "spawn", entityName: "phi" }, "A", "s2"), client);
+		expect(second.type).toBe("spawn");
+		if (second.ok !== false) throw new Error("expected rejection");
+		expect(second.error.code).toBe("session_already_active");
+		expect(second.error.message).toContain("already live");
+		expect(supervisor.listSessions()).toHaveLength(1);
+		expect(supervisor.listSessions()[0]!.id).toBe(first.id);
+	});
+
+	test("spawn --force relocates: stops the live session and spawns a fresh one", async () => {
+		const { supervisor } = makeSupervisor();
+		const client = new RecordingClient("A");
+		const first = await supervisor.handle(envelope({ type: "spawn", entityName: "phi" }, "A", "s1"), client);
+		if (first.type !== "spawn" || first.ok !== true) throw new Error("spawn failed");
+		const relocated = await supervisor.handle(
+			envelope({ type: "spawn", entityName: "phi", force: true }, "A", "s2"),
+			client,
+		);
+		if (relocated.type !== "spawn" || relocated.ok !== true) throw new Error("relocate failed");
+		expect(relocated.id).not.toBe(first.id);
+		expect(supervisor.listSessions()).toHaveLength(1);
+		expect(supervisor.listSessions()[0]!.id).toBe(relocated.id);
+	});
 });

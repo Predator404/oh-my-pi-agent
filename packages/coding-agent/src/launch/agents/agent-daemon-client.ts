@@ -8,6 +8,8 @@
  * the peer layer (WS5) call plain methods and subscribe to session events.
  */
 
+import { join } from "node:path";
+import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { DaemonBrokerClient } from "../client";
 import {
 	type ActiveSessionId,
@@ -37,6 +39,58 @@ function agentError(result: AgentControlResult): Error {
 		return error;
 	}
 	return new Error(`unexpected agent result for ${result.type}`);
+}
+
+/** Broker filename holding `{ pid, instanceId }` for the scope's owning broker. */
+const BROKER_PID_FILE = "broker.pid";
+/** Poll cadence + ceilings for the daemon restart handshake. */
+const BROKER_EXIT_POLL_MS = 100;
+const BROKER_EXIT_TIMEOUT_MS = 8_000;
+const BROKER_RESPAWN_ATTEMPTS = 40;
+
+/** Outcome of {@link AgentDaemonClient.promptAndWait}. */
+export interface EntityTurnResult {
+	/** The last assistant message emitted during the woken turn, if any. */
+	reply?: AgentMessage;
+	/** Every assistant message emitted during the woken turn, in order. */
+	messages: AgentMessage[];
+	/** The session closed while waiting for the turn to complete. */
+	closed: boolean;
+	/** The wait ceiling elapsed before the turn ended. */
+	timedOut: boolean;
+}
+
+/** Snapshot of the entity-runtime daemon (broker) for `entity daemon status`. */
+export interface EntityDaemonStatus {
+	running: boolean;
+	pid?: number;
+	runtimeDir: string;
+	projectDir: string;
+	sessions: AgentSessionSummary[];
+}
+
+/** Result of `entity daemon shutdown`. */
+export interface EntityDaemonShutdown {
+	stopped: boolean;
+	wasRunning: boolean;
+	hadSessions: number;
+}
+
+/** Result of `entity daemon restart`. */
+export interface EntityDaemonRestart {
+	restarted: boolean;
+	previousPid?: number;
+	previousSessions: number;
+	pid?: number;
+}
+
+function isPidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
 }
 
 export class AgentDaemonClient {
@@ -75,10 +129,67 @@ export class AgentDaemonClient {
 		return this.#broker.onAgentEvent(id, sink);
 	}
 
-	async spawn(entityName: string, cwd?: string): Promise<AgentSessionSummary> {
-		const result = await this.command({ type: "spawn", entityName, cwd });
+	async spawn(entityName: string, cwd?: string, force?: boolean): Promise<AgentSessionSummary> {
+		const result = await this.command({ type: "spawn", entityName, cwd, force });
 		if (result.type === "spawn" && result.ok) return result.summary;
 		throw agentError(result);
+	}
+
+	/**
+	 * Prompt a resident session and block until the woken turn completes,
+	 * returning the assistant messages it produced. Adapted from Prime's
+	 * `promptAndWait`: attach so the event stream flows to this client, send the
+	 * prompt, then resolve when the worker's run-state returns to idle (or the
+	 * session closes / a ceiling elapses). The resident worker emits `status`
+	 * busy=true → `message` events → `status` busy=false around the woken turn.
+	 */
+	async promptAndWait(
+		id: ActiveSessionId,
+		text: string,
+		options: { timeoutMs?: number } = {},
+	): Promise<EntityTurnResult> {
+		const messages: AgentMessage[] = [];
+		let sawBusy = false;
+		let accepted = false;
+		let closed = false;
+		let timedOut = false;
+		const done = Promise.withResolvers<void>();
+		const unsubscribe = this.onEvent(id, envelope => {
+			const event = envelope.event;
+			if (event.kind === "status") {
+				if (event.busy) sawBusy = true;
+				else if (sawBusy || accepted) done.resolve();
+			} else if (event.kind === "message") {
+				if (event.message.role === "assistant") messages.push(event.message);
+			} else if (event.kind === "closed") {
+				closed = true;
+				done.resolve();
+			}
+		});
+		let timer: NodeJS.Timeout | undefined;
+		try {
+			await this.attach(id);
+			await this.prompt(id, text);
+			accepted = true;
+			if (options.timeoutMs !== undefined) {
+				timer = setTimeout(() => {
+					timedOut = true;
+					done.resolve();
+				}, options.timeoutMs);
+			}
+			await done.promise;
+		} finally {
+			clearTimeout(timer);
+			unsubscribe();
+			if (!closed) {
+				try {
+					await this.detach(id);
+				} catch {
+					// Best-effort detach; the session may already be gone.
+				}
+			}
+		}
+		return { reply: messages.at(-1), messages, closed, timedOut };
 	}
 
 	async attach(
@@ -227,5 +338,102 @@ export class AgentDaemonClient {
 		const result = await this.command({ type: "autonomous_status", id });
 		if (result.type === "autonomous_status" && result.ok) return result.status;
 		throw agentError(result);
+	}
+
+	// Daemon (broker) lifecycle -------------------------------------------------
+
+	/**
+	 * Report the entity-runtime broker's liveness + resident sessions WITHOUT
+	 * spawning one: liveness is read from the on-disk `broker.pid`, and sessions
+	 * are listed only when a broker is already alive (so this never resurrects a
+	 * stopped daemon just to describe it).
+	 */
+	async daemonStatus(): Promise<EntityDaemonStatus> {
+		const runtimeDir = this.#broker.runtimeDir;
+		const projectDir = this.#broker.projectDir;
+		const pid = runtimeDir === undefined ? undefined : await this.#readBrokerPid(runtimeDir);
+		const running = pid !== undefined && isPidAlive(pid);
+		let sessions: AgentSessionSummary[] = [];
+		if (running) {
+			try {
+				sessions = await this.list();
+			} catch {
+				// The broker is exiting between the pid read and the list; treat as no sessions.
+			}
+		}
+		return { running, pid: running ? pid : undefined, runtimeDir: runtimeDir ?? "", projectDir, sessions };
+	}
+
+	/**
+	 * Stop the entity-runtime broker and all its resident workers. Refuses when
+	 * sessions are live unless `force` is set; a no-op (with `wasRunning:false`)
+	 * when no broker is running.
+	 */
+	async daemonShutdown(force = false): Promise<EntityDaemonShutdown> {
+		const status = await this.daemonStatus();
+		if (!status.running) return { stopped: false, wasRunning: false, hadSessions: 0 };
+		if (status.sessions.length > 0 && !force) {
+			const n = status.sessions.length;
+			throw new Error(
+				`${n} entit${n === 1 ? "y is" : "ies are"} live; stop them first or pass --force to shut the daemon down anyway`,
+			);
+		}
+		await this.#broker.request({ op: "shutdown" });
+		return { stopped: true, wasRunning: true, hadSessions: status.sessions.length };
+	}
+
+	/**
+	 * Cleanly cycle the broker: shut the current one (and its resident workers)
+	 * down, wait for it to exit and release its lease, then respawn a FRESH
+	 * broker and confirm it answers. This is the fix for a stale model alias
+	 * pinned in a long-lived resident broker — the new broker reloads config.
+	 */
+	async daemonRestart(): Promise<EntityDaemonRestart> {
+		const before = await this.daemonStatus();
+		if (before.running) {
+			await this.#broker.request({ op: "shutdown" });
+			if (before.pid !== undefined) await this.#waitForBrokerExit(before.pid);
+		}
+		await this.#respawnAndConfirm();
+		const after = await this.daemonStatus();
+		return {
+			restarted: true,
+			previousPid: before.pid,
+			previousSessions: before.sessions.length,
+			pid: after.pid,
+		};
+	}
+
+	async #readBrokerPid(runtimeDir: string): Promise<number | undefined> {
+		try {
+			const raw: unknown = await Bun.file(join(runtimeDir, BROKER_PID_FILE)).json();
+			if (typeof raw === "object" && raw !== null && "pid" in raw && typeof raw.pid === "number") return raw.pid;
+		} catch {
+			// Missing or malformed broker.pid — no owning broker.
+		}
+		return undefined;
+	}
+
+	async #waitForBrokerExit(pid: number): Promise<void> {
+		const deadline = Date.now() + BROKER_EXIT_TIMEOUT_MS;
+		while (Date.now() < deadline) {
+			if (!isPidAlive(pid)) return;
+			await Bun.sleep(BROKER_EXIT_POLL_MS);
+		}
+	}
+
+	async #respawnAndConfirm(): Promise<AgentSessionSummary[]> {
+		let lastError: unknown;
+		for (let attempt = 0; attempt < BROKER_RESPAWN_ATTEMPTS; attempt++) {
+			try {
+				return await this.list();
+			} catch (error) {
+				lastError = error;
+				await Bun.sleep(BROKER_EXIT_POLL_MS);
+			}
+		}
+		throw new Error(
+			`daemon did not come back up after restart: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+		);
 	}
 }

@@ -32,6 +32,9 @@ const ACTIONS = [
 	"heartbeat",
 	"goal",
 	"autonomous",
+	"transcript",
+	"logs",
+	"daemon",
 ] as const;
 
 export default class Entity extends Command {
@@ -46,7 +49,12 @@ export default class Entity extends Command {
 		json: Flags.boolean({ description: "Output JSON" }),
 		cwd: Flags.string({ description: "Working directory for a spawned entity session" }),
 		registry: Flags.string({ description: "Entity-registry root override" }),
-		force: Flags.boolean({ char: "f", description: "Overwrite / relink on conflict" }),
+		force: Flags.boolean({
+			char: "f",
+			description: "Overwrite / relink on conflict; relocate a live entity on spawn",
+		}),
+		wait: Flags.boolean({ description: "prompt: block for the entity's reply and print it" }),
+		last: Flags.integer({ description: "transcript: number of recent turns to dump (default 10)" }),
 		mode: Flags.string({
 			description: "send delivery: auto|steer|follow_up",
 			options: ["auto", "steer", "follow_up"],
@@ -70,6 +78,8 @@ export default class Entity extends Command {
 		"vault-section": Flags.string({ description: "create: owned vault subtree" }),
 		endpoint: Flags.string({ description: "create: hosting model-endpoint provider id" }),
 		prompt: Flags.string({ description: "create: system-prompt body (else read stdin)" }),
+		icon: Flags.string({ description: "create: single display glyph (emoji/char)" }),
+		color: Flags.string({ description: "create: theme-color token (accent, success, ...)" }),
 		set: Flags.string({ description: "config: key=value update (repeatable)", multiple: true }),
 		vault: Flags.string({ description: "setup: actual vault location for the ~/vault symlink" }),
 		"registry-source": Flags.string({ description: "setup: repo-2 registry checkout to wire the root to" }),
@@ -103,6 +113,8 @@ export default class Entity extends Command {
 				cwd: flags.cwd,
 				registry: flags.registry,
 				force: flags.force,
+				wait: flags.wait,
+				last: flags.last,
 				mode: flags.mode,
 				delivery: flags.delivery,
 				label: flags.label,
@@ -123,6 +135,8 @@ export default class Entity extends Command {
 				vaultSection: flags["vault-section"],
 				endpoint: flags.endpoint,
 				prompt: flags.prompt,
+				icon: flags.icon,
+				color: flags.color,
 				set: flags.set,
 				vault: flags.vault,
 				registrySource: flags["registry-source"],

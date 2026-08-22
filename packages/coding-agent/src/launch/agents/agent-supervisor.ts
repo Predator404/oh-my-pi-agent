@@ -187,7 +187,9 @@ export class AgentSupervisor {
 			// anything that reached a worker (or spawned one) is recorded as final.
 			if (
 				result.ok === false &&
-				(result.error.code === "invalid_command" || result.error.code === "unknown_entity")
+				(result.error.code === "invalid_command" ||
+					result.error.code === "unknown_entity" ||
+					result.error.code === "session_already_active")
 			) {
 				this.#journal.abort(clientId, envelope.id);
 			} else {
@@ -202,7 +204,7 @@ export class AgentSupervisor {
 		if (!SUPERVISOR_LOCAL_COMMANDS[command.type]) return this.#forward(envelope);
 		switch (command.type) {
 			case "spawn":
-				return this.#spawn(command.entityName, command.cwd);
+				return this.#spawn(command.entityName, command.cwd, command.force);
 			case "list":
 				return Promise.resolve({ type: "list", ok: true, sessions: this.listSessions() });
 			case "attach":
@@ -238,11 +240,40 @@ export class AgentSupervisor {
 		for (const record of this.#records.values()) record.attached.delete(clientId);
 	}
 
-	async #spawn(entityName: string, cwd?: string): Promise<AgentControlResult> {
+	/** The live (starting/ready/recovering) record for an entity, if any. */
+	#liveRecordForEntity(entityName: string): WorkerRecord | undefined {
+		for (const record of this.#records.values()) {
+			if (record.entityName !== entityName) continue;
+			if (record.state === "failed" || record.state === "stopping") continue;
+			return record;
+		}
+		return undefined;
+	}
+
+	async #spawn(entityName: string, cwd?: string, force?: boolean): Promise<AgentControlResult> {
+		const resolvedCwd = cwd ?? process.cwd();
+
+		// Fail fast when the entity is already live: spawning a second worker
+		// would only block on the entity's session lease until the 30s handshake
+		// times out, then surface as an opaque `worker_unavailable`. Because the
+		// entity runtime uses ONE global broker, a spawn from any cwd routes here,
+		// so the in-broker record is the authoritative already-live signal.
+		// `--force` relocates by stopping the live session first.
+		const existing = this.#liveRecordForEntity(entityName);
+		if (existing) {
+			if (!force) {
+				return this.#error("spawn", {
+					code: "session_already_active",
+					message: `entity ${entityName} already live at ${existing.cwd} (session ${existing.id}); use \`entity attach ${entityName}\` or \`entity prompt ${entityName} …\`, or pass --force to relocate`,
+					sessionPath: existing.cwd,
+				});
+			}
+			await this.#stop(existing.id);
+		}
+
 		const id = this.#newId();
 		const token = this.#newId();
 		const generation = this.#newId();
-		const resolvedCwd = cwd ?? process.cwd();
 		let link: BrokerSideLink;
 		try {
 			({ link } = await this.#spawner.spawn({
