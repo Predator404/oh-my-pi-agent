@@ -16,6 +16,8 @@
  * - history:// - Index of all registry + on-disk agents (id, status, kind, last activity)
  * - history://<agentId> - Concise markdown transcript of that agent
  */
+
+import { readEntitySessionPointer } from "../launch/agents/entity-session-paths";
 import type { AgentRef } from "../registry/agent-registry";
 import { AgentRegistry } from "../registry/agent-registry";
 import { formatSessionHistoryMarkdown } from "../session/session-history-format";
@@ -86,6 +88,12 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 			const disk = await this.#resolveFromDisk(agentId);
 			if (disk) return { ...disk, url: url.href };
 
+			// A resident daemon entity keeps its transcript under
+			// `<agentDir>/entities/<name>/.session-pointer`, not the artifacts tree
+			// the disk scan walks — resolve it by entity name.
+			const entity = await this.#resolveEntitySession(agentId);
+			if (entity) return { ...entity, url: url.href };
+
 			const known = visible.map(candidate => candidate.id);
 			const knownStr = known.length > 0 ? known.join(", ") : "none";
 			throw new Error(`Unknown agent: ${agentId}\nKnown agents: ${knownStr}\nList all with history://`);
@@ -144,6 +152,26 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 			size: Buffer.byteLength(content, "utf-8"),
 			sourcePath: sessionFile,
 			notes: ["Source: session file (read-only, unregistered)"],
+		};
+	}
+
+	/**
+	 * Load a resident daemon entity's transcript by entity name from its durable
+	 * session pointer. Returns `undefined` when the entity has never spawned or
+	 * its pointed-at session file is gone.
+	 */
+	async #resolveEntitySession(agentId: string): Promise<InternalResource | undefined> {
+		const sessionFile = readEntitySessionPointer(agentId);
+		if (!sessionFile) return undefined;
+		const messages = await loadSessionMessagesReadOnly(sessionFile);
+		const content = formatSessionHistoryMarkdown(messages, { title: `${agentId} (resident entity)` });
+		return {
+			url: "",
+			content,
+			contentType: "text/markdown",
+			size: Buffer.byteLength(content, "utf-8"),
+			sourcePath: sessionFile,
+			notes: ["Source: resident entity session (read-only)"],
 		};
 	}
 
