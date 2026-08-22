@@ -95,7 +95,9 @@ interface KernelSessionRegistry<
 > {
 	disposeAll(): Promise<void>;
 	disposeByOwner(ownerId: string): Promise<void>;
-	executeOnSession(code: string, cwd: string, options: TOptions): Promise<R>;
+	/** True when a live (or still-starting) kernel session is currently held for this owner. Never spawns. */
+	hasOwner(ownerId: string): boolean;
+	executeOnSession(code: string, cwd: string, options: TOptions): Promise<TResult>;
 	peekLiveKernel(cwd: string, options: TOptions): TKernel | undefined;
 	getPresentSession(cwd: string, options: TOptions): TSession | undefined;
 }
@@ -410,6 +412,34 @@ export function createKernelSessionRegistry<
 		}
 	}
 
+	async function acquireRetryKernel(
+		session: TSession,
+		kernel: TKernel,
+		cwd: string,
+		options: TOptions,
+	): Promise<TKernel> {
+		if (descriptor.acquireLiveSessionKernel) {
+			const retryKernel = await acquireLiveSessionKernel(session, cwd, options);
+			if (!isCurrent(session, retryKernel)) throw new descriptor.cancelledErrorClass(false);
+			return retryKernel;
+		}
+		const retryKernel = await acquireDefaultReplacementKernel(session, kernel, cwd, options);
+		if (!isCurrent(session) || session.kernel !== retryKernel) {
+			throw new descriptor.cancelledErrorClass(false);
+		}
+		return retryKernel;
+	}
+
+	function hasOwner(ownerId: string): boolean {
+		for (const session of sessions.values()) {
+			if (session.ownerIds.has(ownerId)) return true;
+		}
+		for (const starting of startingSessions.values()) {
+			if (starting.ownerIds.has(ownerId)) return true;
+		}
+		return false;
+	}
+
 	function peekLiveKernel(cwd: string, options: TOptions): TKernel | undefined {
 		const sessionId = options.sessionId ?? `session:${cwd}`;
 		const sessionKey = resolveOwnerScopedSessionKey({
@@ -435,7 +465,7 @@ export function createKernelSessionRegistry<
 		return sessions.get(sessionKey);
 	}
 
-	async function executeOnSession(code: string, cwd: string, options: TOptions): Promise<R> {
+	async function executeOnSession(code: string, cwd: string, options: TOptions): Promise<TResult> {
 		const sessionId = options.sessionId ?? `session:${cwd}`;
 		const sessionKey = resolveOwnerScopedSessionKey({
 			baseKey: descriptor.buildSessionKey(sessionId, cwd, options.interpreter),
@@ -491,5 +521,5 @@ export function createKernelSessionRegistry<
 		return result;
 	}
 
-	return { disposeAll, disposeByOwner, executeOnSession, peekLiveKernel, getPresentSession };
+	return { disposeAll, disposeByOwner, hasOwner, executeOnSession, peekLiveKernel, getPresentSession };
 }
