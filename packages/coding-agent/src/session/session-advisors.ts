@@ -339,6 +339,14 @@ export class SessionAdvisors {
 	#pendingAdvisorCardEvents = new Set<Promise<void>>();
 	#advisorYieldQueueUnsubscribe: (() => void) | undefined;
 	#entityVisualByName: Record<string, { icon?: string; color?: string }> | undefined;
+	/**
+	 * Canonical names of advisors with an unanswered direct address (`@@<name>:`).
+	 * The addressed advisor's next accepted advice is force-surfaced (never routed
+	 * to the idle-suppressed aside queue) so a plain, severity-free answer reaches
+	 * the user instead of stranding until the next prompt. Consumed on that first
+	 * advice; cleared wholesale on conversation boundary.
+	 */
+	#pendingDirectAddress = new Set<string>();
 
 	constructor(host: SessionAdvisorsHost, options: SessionAdvisorsOptions) {
 		this.#host = host;
@@ -720,6 +728,7 @@ export class SessionAdvisors {
 		this.#advisorPrimaryTurnsCompleted = 0;
 		this.#advisorInterruptImmuneTurnStart = undefined;
 		this.#advisorAutoResumeSuppressed = false;
+		this.#pendingDirectAddress.clear();
 		this.#host.yieldQueue.clear("advisor");
 		this.#host.extractQueuedAdvisorCards();
 		this.#host.dropPendingAdvisorCards();
@@ -1254,6 +1263,10 @@ export class SessionAdvisors {
 		const source = advisor.slug ? advisor.name : undefined;
 		const visual = this.#entityVisualByName?.[advisor.name.toLowerCase()] ?? this.#entityVisualByName?.[advisor.slug];
 		const interrupting = isInterruptingSeverity(severity);
+		// A direct address awaiting this advisor's answer forces visible delivery:
+		// consume the pending flag (first accepted note wins) so the reply surfaces
+		// regardless of severity instead of stranding on the idle-suppressed aside queue.
+		const directAddress = this.#pendingDirectAddress.delete(advisor.name);
 		const channel = resolveAdvisorDeliveryChannel({
 			severity,
 			autoResumeSuppressed: this.#advisorAutoResumeSuppressed,
@@ -1265,6 +1278,7 @@ export class SessionAdvisors {
 			aborting: this.#host.abortInProgress(),
 			terminalAnswerNoQueuedWork: this.#hasTerminalTextAnswerWithoutQueuedWork(),
 			interruptImmuneTurnActive: interrupting && this.#isAdvisorInterruptImmuneTurnActive(),
+			directAddress,
 		});
 		if (channel === "aside") {
 			this.#host.yieldQueue.enqueue("advisor", {
@@ -1941,6 +1955,16 @@ export class SessionAdvisors {
 		const lower = token.toLowerCase();
 		const hit = this.#advisors.find(advisor => advisor.slug === slug || advisor.name.toLowerCase() === lower);
 		return hit?.name;
+	}
+
+	/**
+	 * Mark that the primary turn is deferring a direct address (`@@<name>:`) to
+	 * `advisorName` (a canonical name from {@link resolveAddressedAdvisor}). The
+	 * addressed advisor's next accepted advice is delivered visibly rather than
+	 * as an idle-suppressed aside, so the user's explicit question is answered.
+	 */
+	markDirectAddress(advisorName: string): void {
+		this.#pendingDirectAddress.add(advisorName);
 	}
 
 	/**
