@@ -4,6 +4,7 @@ import { visibleWidth } from "../utils";
 import type { AdvisorMessageDetails, AdvisorNote, AdvisorSeverity } from "./messages";
 import { formatBadge, replaceTabs, type ToolUIColor, wrapTextWithAnsi } from "../render/render-utils";
 import { Ellipsis, truncateToWidth } from "../render";
+import { isValidThemeColor } from "../theme/schema";
 import type { Theme } from "../theme";
 
 const COLLAPSED_NOTES = 3;
@@ -100,13 +101,20 @@ class AdvisorNotes implements Component {
 
 /** Wrapped, truncated rail rows for a single note; shared by both branches. */
 function renderAdvisorNote(entry: AdvisorNote, width: number, uiTheme: Theme): string[] {
+	const color = entry.color && isValidThemeColor(entry.color) ? entry.color : undefined;
+	const glyph = entry.icon && uiTheme.getSymbolPreset() !== "ascii" ? `${entry.icon} ` : "";
+	const bubbleBg = color ? uiTheme.getBubbleBgAnsi(color) : undefined;
 	const badge = entry.severity ? `${formatBadge(entry.severity, severityColor(entry.severity), uiTheme)} ` : "";
-	// Multi-advisor: attribute the note to its source. The implicit
+	// Multi-advisor: attribute the note to its source, using the entity's
+	// glyph + color when the advisor maps to a registry entity. The implicit
 	// single ("default") advisor renders unlabeled, as before.
-	const who =
-		entry.advisor && entry.advisor !== "default" ? `${uiTheme.fg("dim", `[${replaceTabs(entry.advisor)}]`)} ` : "";
+	let who = "";
+	if (entry.advisor && entry.advisor !== "default") {
+		const label = `${glyph}${replaceTabs(entry.advisor)}`;
+		who = color ? `${uiTheme.fg(color, uiTheme.bold(label))} ` : `${uiTheme.fg("dim", `[${label}]`)} `;
+	}
 	const railGlyph = uiTheme.symbol("advisor.rail");
-	const rail = uiTheme.fg(severityColor(entry.severity), railGlyph);
+	const rail = color ? uiTheme.fg(color, railGlyph) : uiTheme.fg(severityColor(entry.severity), railGlyph);
 	const quoteWidth = visibleWidth(`  ${railGlyph} `);
 	const badgeWidth = visibleWidth(badge);
 	const whoWidth = visibleWidth(who);
@@ -124,10 +132,14 @@ function renderAdvisorNote(entry: AdvisorNote, width: number, uiTheme: Theme): s
 		}
 	}
 
-	return bodyLines.map(
-		(line, index) =>
-			`  ${rail} ${index === 0 ? `${badge}${who}` : ""}${uiTheme.fg("customMessageText", replaceTabs(line))}`,
-	);
+	const bubbleWidth = Math.min(NOTE_LINE_WIDTH, width);
+	return bodyLines.map((line, index) => {
+		const prefix = index === 0 ? `${badge}${who}` : "";
+		const content = `  ${rail} ${prefix}${uiTheme.fg("customMessageText", replaceTabs(line))}`;
+		if (!bubbleBg) return content;
+		const pad = " ".repeat(Math.max(0, bubbleWidth - visibleWidth(content)));
+		return `${bubbleBg}${content}${pad}\x1b[49m`;
+	});
 }
 
 /**

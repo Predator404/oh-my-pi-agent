@@ -30,6 +30,8 @@ const PERSONA_RECORD = `---
 name: phi
 description: OMP expert persona.
 role: persona
+icon: "🔷"
+color: accent
 model: [anthropic/opus]
 thinkingLevel: high
 tools: [read, grep, glob]
@@ -68,6 +70,8 @@ describe("entity registry — schema load/validate (C1)", () => {
 			enabled: true,
 		});
 		expect(record.hosting).toEqual({ modelEndpoint: "anthropic" });
+		expect(record.icon).toBe("🔷");
+		expect(record.color).toBe("accent");
 	});
 
 	it("rejects a persona that sets memory.autoRetain: true (curated-only policy)", () => {
@@ -146,6 +150,34 @@ vaultSection: agents/x
 `;
 		expect(() => parseEntityRecord("/tmp/x.md", emptyBody, "user")).toThrow(/system prompt/);
 	});
+
+	it("rejects an icon that is not a single glyph", () => {
+		const badIcon = `---
+name: x
+description: d.
+role: agent
+icon: "AB"
+memory: { backend: mnemopi, bank: x, autoRetain: false }
+vaultSection: agents/x
+---
+body
+`;
+		expect(() => parseEntityRecord("/tmp/x.md", badIcon, "user")).toThrow(/icon/);
+	});
+
+	it("rejects a color that is not a theme-color token", () => {
+		const badColor = `---
+name: x
+description: d.
+role: agent
+color: chartreuse
+memory: { backend: mnemopi, bank: x, autoRetain: false }
+vaultSection: agents/x
+---
+body
+`;
+		expect(() => parseEntityRecord("/tmp/x.md", badColor, "user")).toThrow(/color/);
+	});
 });
 
 describe("entity registry — record → session config resolution (C1 → WS1)", () => {
@@ -174,6 +206,8 @@ describe("entity registry — record → session config resolution (C1 → WS1)"
 		expect(config.vaultSection).toBe("personas/phi");
 		expect(config.watchdog?.name).toBe("phi-guard");
 		expect(config.hosting).toEqual({ modelEndpoint: "anthropic" });
+		expect(config.icon).toBe("🔷");
+		expect(config.color).toBe("accent");
 		// Prompt is loaded on demand at resolution, not before.
 		expect(config.systemPrompt).toBe("You are Phi, the OMP/pi expert persona.");
 		// cwd is threaded from the launch context, not the record.
@@ -198,6 +232,8 @@ describe("entity registry — record → session config resolution (C1 → WS1)"
 			"name",
 			"description",
 			"role",
+			"icon",
+			"color",
 			"model",
 			"thinkingLevel",
 			"systemPrompt",

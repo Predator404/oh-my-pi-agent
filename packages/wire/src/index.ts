@@ -238,6 +238,10 @@ export interface SessionState {
 export interface AgentSnapshot {
 	id: string;
 	displayName: string;
+	/** Optional display glyph for an entity-backed agent (empty for plain sub/main). */
+	icon?: string;
+	/** Optional theme-color token tinting the agent's label/marker (plain string to avoid a cross-package enum dep). */
+	color?: string;
 	kind: "main" | "sub";
 	parentId?: string;
 	status: "running" | "idle" | "parked" | "aborted";

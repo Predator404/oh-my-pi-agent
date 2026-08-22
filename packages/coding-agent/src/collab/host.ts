@@ -1025,6 +1025,8 @@ export class CollabHost {
 				.map(ref => ({
 					id: ref.id,
 					displayName: ref.displayName,
+					icon: ref.icon,
+					color: ref.color,
 					kind: ref.kind,
 					parentId: ref.parentId,
 					status: ref.status,

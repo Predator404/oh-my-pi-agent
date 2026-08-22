@@ -43,6 +43,10 @@ export interface AgentRecordLike {
 	createdAt: number;
 	lastActivity: number;
 	activity?: string;
+	/** Entity display glyph, when the agent maps to a registry entity. */
+	icon?: string;
+	/** Entity theme-color token, when the agent maps to a registry entity. */
+	color?: string;
 	history?: {
 		agent?: string;
 		modelRole?: string;

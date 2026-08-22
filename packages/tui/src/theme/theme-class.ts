@@ -1,7 +1,7 @@
 import { colorLuma, relativeLuminance } from "@oh-my-pi/pi-utils/color";
 import * as logger from "@oh-my-pi/pi-utils/logger";
 import chalk from "@oh-my-pi/pi-utils/chalk";
-import { bgAnsi, colorToAnsi, fgAnsi, resolveToHex } from "./color";
+import { bgAnsi, colorToAnsi, fgAnsi, mixHex, resolveToHex } from "./color";
 import { type ColorMode, isValidThemeColor, type ThemeBg, type ThemeColor } from "./schema";
 import type { SessionAccentTheme } from "./session-color";
 import {
@@ -364,7 +364,7 @@ export class Theme {
 	}
 
 	/**
-	 * Foreground ANSI for text rendered over a controlled theme background.
+ * Foreground ANSI for text rendered over a controlled theme background.
 	 * Explicit theme colors win; terminal-default tokens become black or near-white.
 	 */
 	getFgOnBgAnsi(color: ThemeColor, background: ThemeBg): string {
@@ -376,6 +376,21 @@ export class Theme {
 		if (backgroundAnsi === "\x1b[49m") return ansi;
 		const backgroundLuma = colorLuma(this.getBgHex(background));
 		return colorToAnsi(backgroundLuma !== undefined && backgroundLuma > 0.5 ? "#000000" : "#e5e5e7", this.mode);
+	}
+
+	/**
+	 * Background ANSI for a per-entity "speech bubble": the entity's foreground
+	 * color mixed lightly over the custom-message card background, so each
+	 * entity's turns read as its own tinted block while staying legible. Falls
+	 * back to the plain `customMessageBg` when the color has no resolved hex.
+	 */
+	getBubbleBgAnsi(color: ThemeColor): string {
+		const colorHex = this.#hexFgColors[color];
+		if (!colorHex || !colorHex.startsWith("#")) return this.getBgAnsi("customMessageBg");
+		const light = this.statusLineLuminance !== undefined && this.statusLineLuminance > 0.5;
+		const baseHex = this.#hexBgColors.customMessageBg || (light ? "#ffffff" : "#111111");
+		return bgAnsi(mixHex(baseHex, colorHex, 0.16), this.mode);
+	}
 	}
 
 	/**

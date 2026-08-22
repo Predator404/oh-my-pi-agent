@@ -33,6 +33,7 @@ import { USER_INTERRUPT_LABEL } from "../chat/messages";
 import { shortenPath, truncateToWidth } from "../render/render-utils";
 import { formatLocalDateTimeWithOffset } from "../chrome/local-date";
 import type { ObservableSession, SessionObserverRegistry } from "./session-observer-registry";
+import { isValidThemeColor } from "../theme/schema";
 import { theme } from "../theme/theme";
 import { matchesSelectDown, matchesSelectUp } from "../keybinding-matchers";
 import {
@@ -46,6 +47,7 @@ import {
 import {
 	clampHubLine,
 	contextGauge,
+	entityGlyph,
 	formatChildIds,
 	formatCost,
 	formatMetricColumns,
@@ -1061,7 +1063,12 @@ export class AgentHubOverlayComponent<TRecord extends AgentRecordLike = AgentRec
 			add(theme.bold(theme.fg("accent", label)));
 		};
 
-		add(`${statusGlyph(ref.status)} ${theme.bold(sanitizeDisplaySingleLine(ref.displayName || ref.id))}`);
+		const headerName = theme.bold(sanitizeDisplaySingleLine(ref.displayName || ref.id));
+		const headerColor = ref.color && isValidThemeColor(ref.color) ? ref.color : undefined;
+		const headerGlyph = entityGlyph(ref);
+		add(
+			`${statusGlyph(ref.status)} ${headerGlyph ? `${headerGlyph} ` : ""}${headerColor ? theme.fg(headerColor, headerName) : headerName}`,
+		);
 		if (ref.displayName && ref.displayName !== ref.id) add(theme.fg("dim", sanitizeDisplaySingleLine(ref.id)));
 		const lifecycleDetails = [
 			metrics ? formatMetricDuration(metrics) : undefined,
@@ -1167,7 +1174,15 @@ export class AgentHubOverlayComponent<TRecord extends AgentRecordLike = AgentRec
 			: "";
 		const id = sanitizeDisplaySingleLine(ref.id);
 		const styledId = selected ? theme.bold(theme.fg("accent", id)) : theme.bold(id);
-		const fields: string[] = [`${cursor} ${branch}${statusGlyph(ref.status)} ${styledId}`];
+		const rowGlyph = entityGlyph(ref);
+		const fields: string[] = [
+			`${cursor} ${statusGlyph(ref.status)} ${rowGlyph ? `${rowGlyph} ` : ""}${branch}${styledId}`,
+		];
+		if (ref.displayName && ref.displayName !== ref.id) {
+			const rowName = sanitizeDisplaySingleLine(ref.displayName);
+			const rowColor = ref.color && isValidThemeColor(ref.color) ? ref.color : undefined;
+			fields.push(rowColor ? theme.fg(rowColor, rowName) : theme.fg("dim", rowName));
+		}
 		if (this.#viewMode === "roster" && ref.parentId && ref.parentId !== MAIN_AGENT_ID) {
 			fields.push(theme.fg("dim", `↳ ${sanitizeDisplaySingleLine(ref.parentId)}`));
 		}

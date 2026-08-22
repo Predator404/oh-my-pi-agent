@@ -81,6 +81,7 @@ import { serviceTierForAllFamilies, serviceTierSettingToTier } from "../config/s
 import type { Settings } from "../config/settings";
 import { CursorExecHandlers, type CursorMcpResourceAdapter } from "../cursor";
 import { bridgeToolMap } from "../cursor-bridge-tools";
+import { discoverEntities } from "../entity/loader";
 import { estimateToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
 import type { PlanModeState } from "../plan-mode/state";
 import advisorSystemPrompt from "../prompts/advisor/system.md" with { type: "text" };
@@ -468,6 +469,7 @@ export class SessionAdvisors {
 	#advisorInterruptImmuneTurnStart: number | undefined;
 	#pendingAdvisorCardEvents = new Set<Promise<void>>();
 	#advisorYieldQueueUnsubscribe: (() => void) | undefined;
+	#entityVisualByName: Record<string, { icon?: string; color?: string }> | undefined;
 
 	constructor(host: SessionAdvisorsHost, options: SessionAdvisorsOptions) {
 		this.#host = host;
@@ -487,6 +489,30 @@ export class SessionAdvisors {
 		this.#advisorStreamFn = options.streamFn;
 		this.#transformProviderContext = options.transformProviderContext;
 		if (this.#advisorEnabled) this.#buildAdvisorRuntime();
+		void this.#ensureEntityVisuals();
+	}
+
+	/**
+	 * Load per-entity display visuals (icon/color) once, keyed by lowercased name
+	 * and slug, so an advisor that maps to a registry entity renders with that
+	 * entity's identity. Fire-and-forget from the constructor; a plain session
+	 * with no registry resolves to an empty map and every note stays unstyled.
+	 */
+	async #ensureEntityVisuals(): Promise<void> {
+		if (this.#entityVisualByName) return;
+		const map: Record<string, { icon?: string; color?: string }> = {};
+		this.#entityVisualByName = map;
+		try {
+			const { entities } = await discoverEntities();
+			for (const meta of entities) {
+				if (!meta.icon && !meta.color) continue;
+				const visual = { icon: meta.icon, color: meta.color };
+				map[meta.name.toLowerCase()] = visual;
+				map[slugifyAdvisorName(meta.name)] = visual;
+			}
+		} catch (error) {
+			logger.debug("advisor entity-visual resolve failed", { err: String(error) });
+		}
 	}
 
 	/** Delivers one completed primary turn to every live advisor. */
@@ -1433,6 +1459,7 @@ export class SessionAdvisors {
 		// The implicit single ("default") advisor stamps no source name, so its
 		// agent-facing `<advisory>` bytes stay identical to the pre-multi-advisor path.
 		const source = advisor.slug ? advisor.name : undefined;
+		const visual = this.#entityVisualByName?.[advisor.name.toLowerCase()] ?? this.#entityVisualByName?.[advisor.slug];
 		const interrupting = isInterruptingSeverity(severity);
 		const terminalAnswerNoQueuedWork = this.#hasTerminalTextAnswerWithoutQueuedWork();
 		const terminalUnwindPreserve = this.#terminalUnwindActive && severity !== "blocker" && terminalAnswerNoQueuedWork;
@@ -1449,10 +1476,16 @@ export class SessionAdvisors {
 			interruptImmuneTurnActive: interrupting && this.#isAdvisorInterruptImmuneTurnActive(),
 		});
 		if (channel === "aside") {
-			this.#host.yieldQueue.enqueue("advisor", { note, severity, advisor: source });
+			this.#host.yieldQueue.enqueue("advisor", {
+				note,
+				severity,
+				advisor: source,
+				icon: visual?.icon,
+				color: visual?.color,
+			});
 			return;
 		}
-		const notes: AdvisorNote[] = [{ note, severity, advisor: source }];
+		const notes: AdvisorNote[] = [{ note, severity, advisor: source, icon: visual?.icon, color: visual?.color }];
 		const content = formatAdvisorBatchContent(notes);
 		const details = { notes } satisfies AdvisorMessageDetails;
 		if (channel === "preserve") {
