@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Async speculative compaction no longer drops user or tool turns added while the summary was in flight ([#9351](https://github.com/can1357/oh-my-pi/issues/9351)).
+
 ## [18.0.0] - 2026-08-22
 
 ### Added

@@ -1419,6 +1419,7 @@ export class SessionMaintenance {
 		details: unknown;
 		fromExtension: boolean;
 		preserveData: Record<string, unknown> | undefined;
+		speculativeSuffixStartId?: string;
 		method: CompactionMethod | undefined;
 		codexCompaction: CodexCompactionContext | undefined;
 		advisorResetReason: string;
@@ -1435,6 +1436,7 @@ export class SessionMaintenance {
 				preserveData: args.preserveData,
 				method: args.method,
 				tokensAfter: this.#projectCompactedContextTokens(args),
+				speculativeSuffixStartId: args.speculativeSuffixStartId,
 			},
 		);
 		const newEntries = this.#host.sessionManager.getEntries();
@@ -2892,6 +2894,17 @@ export class SessionMaintenance {
 					action,
 					reason,
 				});
+				// The speculation summarized a prefix ending at snapshotLeafId. The
+				// branch may have advanced (new user/tool turns) between arming and
+				// this apply; #armedSpeculationValid guarantees no compaction/reset
+				// boundary was crossed, so those post-snapshot entries are a plain
+				// suffix the summary never saw. Record where that suffix begins so
+				// the rebuild replays it after the (remote) replacement history
+				// instead of dropping the latest turn.
+				const applyBranch = this.#host.sessionManager.getBranch();
+				const snapshotIdx = applyBranch.findIndex(e => e.id === armedSpec.snapshotLeafId);
+				const speculativeSuffixStartId =
+					snapshotIdx >= 0 && snapshotIdx + 1 < applyBranch.length ? applyBranch[snapshotIdx + 1].id : undefined;
 				return await this.#commitAutoCompactionResult({
 					summary: armedSpec.result.summary,
 					shortSummary: armedSpec.result.shortSummary,
@@ -2902,6 +2915,7 @@ export class SessionMaintenance {
 					fromExtension: false,
 					codexCompaction: armedSpec.codexCompaction,
 					method: armedSpec.method,
+					speculativeSuffixStartId,
 					action,
 					reason,
 					willRetry,
@@ -3581,6 +3595,7 @@ export class SessionMaintenance {
 		fromExtension: boolean;
 		codexCompaction: CodexCompactionContext | undefined;
 		method: CompactionMethod | undefined;
+		speculativeSuffixStartId?: string;
 		action: "context-full" | "handoff" | "snapcompact" | "remote";
 		reason: "overflow" | "threshold" | "idle" | "incomplete";
 		willRetry: boolean;
@@ -3619,6 +3634,7 @@ export class SessionMaintenance {
 			preserveData: args.preserveData,
 			codexCompaction: args.codexCompaction,
 			method: args.method,
+			speculativeSuffixStartId: args.speculativeSuffixStartId,
 			advisorResetReason: "auto-compaction",
 			detachExtensionEmit: detachPostCommit,
 		});

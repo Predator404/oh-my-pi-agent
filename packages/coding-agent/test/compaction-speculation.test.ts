@@ -58,10 +58,11 @@ describe("async speculative compaction", () => {
 	let maintenanceSettings: Settings;
 
 	function createMaintenance(
-		options: { asyncEnabled?: boolean; methodOrder?: CompactionMethod[] } = {},
+		options: { asyncEnabled?: boolean; methodOrder?: CompactionMethod[]; model?: Model } = {},
 	): SessionMaintenance {
+		const activeModel = options.model ?? model;
 		const agent = new Agent({
-			initialState: { model, systemPrompt: ["Test"], tools: [], messages: [] },
+			initialState: { model: activeModel, systemPrompt: ["Test"], tools: [], messages: [] },
 		});
 		const settings = Settings.isolated({
 			"compaction.enabled": true,
@@ -83,7 +84,7 @@ describe("async speculative compaction", () => {
 			},
 			providerSessionState: new Map(),
 			preferWebsockets: undefined,
-			model: () => model,
+			model: () => activeModel,
 			thinkingLevel: () => undefined,
 			isDisposed: () => false,
 			isStreaming: () => false,
@@ -335,5 +336,74 @@ describe("async speculative compaction", () => {
 		maintenance = createMaintenance({ methodOrder: ["snapcompact", "soft"] });
 		expect(maintenance.deferThresholdCompactionToSpeculation(THRESHOLD + 1, CONTEXT_WINDOW)).toBe(false);
 		expect(maintenance.speculationState).toBe("idle");
+	});
+
+	it("replays post-snapshot turns when a remote-payload speculation is applied to an advanced branch", async () => {
+		// Regression for #9351: the shared V1/V2 apply path splices in an armed
+		// speculation whose branch snapshot predates the latest turns. When the
+		// committed compaction carries a provider-native replacement payload,
+		// buildSessionContext skips its kept-message loop (the payload transports
+		// the summarized prefix), so any user/tool turn appended AFTER the snapshot
+		// leaf but BEFORE apply is silently dropped — the newest user message never
+		// reaches provider input.
+		authStorage.setRuntimeApiKey("openai", "test-key-openai");
+		// The active model must be able to replay a remote payload for the armed
+		// result to stay valid across the branch advance (remotePreserveReusable).
+		const remoteModel: Model = { ...model, provider: "openai" };
+		maintenance = createMaintenance({ methodOrder: ["remote"], model: remoteModel });
+
+		const compactSpy = vi.spyOn(compactionModule, "compact").mockImplementation(async preparation => ({
+			summary: "armed remote summary",
+			firstKeptEntryId: preparation.firstKeptEntryId,
+			tokensBefore: preparation.tokensBefore,
+			details: {},
+			// Provider-native replacement payload transporting the summarized
+			// prefix. Its presence flips buildSessionContext onto the remote branch.
+			preserveData: {
+				openaiRemoteCompaction: {
+					provider: "openai",
+					replacementHistory: [
+						{ type: "message", role: "assistant", content: [{ type: "output_text", text: "replayed prefix" }] },
+					],
+					usedTokens: 100,
+				},
+			},
+		}));
+
+		maintenance.maybeStartSpeculativeCompaction(SPECULATION_BAND_START, CONTEXT_WINDOW);
+		await waitForState("armed");
+
+		// Branch advances AFTER the snapshot: a new user turn the summary never saw.
+		const postSnapshotText = "post-snapshot user message #9351";
+		sessionManager.appendMessage(userMessage(postSnapshotText));
+
+		await maintenance.runAutoCompaction("threshold", false, false, false, { triggerContextTokens: THRESHOLD });
+
+		// The armed result was spliced in, not re-summarized by a blocking pass.
+		expect(compactSpy).toHaveBeenCalledTimes(1);
+
+		// Non-transcript (agent/provider) context: summary first, then the
+		// post-snapshot suffix. It must NOT collapse to just [compactionSummary].
+		const messages = sessionManager.buildSessionContext().messages;
+		expect(messages[0]?.role).toBe("compactionSummary");
+
+		const textOf = (message: AgentMessage): string => {
+			if (!("content" in message) || !Array.isArray(message.content)) return "";
+			let text = "";
+			for (const block of message.content) {
+				if (block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block) {
+					text += String(block.text ?? "");
+				}
+			}
+			return text;
+		};
+		const postSnapshotIndexes = messages
+			.map((message, index) => ({ message, index }))
+			.filter(({ message }) => message.role === "user" && textOf(message).includes(postSnapshotText))
+			.map(({ index }) => index);
+
+		// Exactly once, and ordered after the compaction summary.
+		expect(postSnapshotIndexes).toEqual([messages.length - 1]);
+		expect(messages.length - 1).toBeGreaterThan(0);
 	});
 });
