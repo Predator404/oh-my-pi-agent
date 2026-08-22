@@ -583,6 +583,10 @@ export interface CreateAgentSessionOptions {
 	 * "main" for a top-level session / "sub" for a subagent.
 	 */
 	agentName?: string;
+	/** Optional display glyph for an entity-backed session (surfaced on its AgentRef). */
+	agentIcon?: string;
+	/** Optional theme-color token tinting the entity's label/marker. */
+	agentColor?: string;
 	/** Optional shared agent registry for IRC routing. Default: AgentRegistry.global(). */
 	agentRegistry?: AgentRegistry;
 	/**
@@ -3314,6 +3318,8 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		const registrationInput = {
 			id: resolvedAgentId,
 			displayName: resolvedAgentDisplayName,
+			icon: options.agentIcon,
+			color: options.agentColor,
 			kind: agentKind,
 			parentId: options.parentAgentId,
 			session: null,

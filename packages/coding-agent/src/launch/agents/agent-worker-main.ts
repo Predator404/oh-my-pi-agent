@@ -281,6 +281,8 @@ export async function startAgentWorkerFromEnvironment(env: NodeJS.ProcessEnv = p
 		toolNames: config.tools,
 		agentId: activeSessionId,
 		agentDisplayName: entityName,
+		agentIcon: config.icon,
+		agentColor: config.color,
 		mcpManager,
 	});
 
