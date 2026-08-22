@@ -72,7 +72,8 @@ import { serviceTierForAllFamilies, serviceTierSettingToTier } from "../config/s
 import type { Settings } from "../config/settings";
 import { CursorExecHandlers, type CursorMcpResourceAdapter } from "../cursor";
 import { bridgeToolMap } from "../cursor-bridge-tools";
-import { discoverEntities } from "../entity/loader";
+import { discoverEntities, resolveEntityConfig } from "../entity/loader";
+import type { ResolvedEntityConfig } from "../entity/schema";
 import { estimateToolSchemaTokens } from "../modes/utils/context-usage";
 import type { PlanModeState } from "../plan-mode/state";
 import advisorSystemPrompt from "../prompts/advisor/system.md" with { type: "text" };
@@ -1741,6 +1742,79 @@ export class SessionAdvisors {
 		const lower = token.toLowerCase();
 		const hit = this.#advisors.find(advisor => advisor.slug === slug || advisor.name.toLowerCase() === lower);
 		return hit?.name;
+	}
+
+	/**
+	 * Resolve a `@@<token>` address against the OMA entity registry and attach the
+	 * matching entity as a live advisor, starting the advisor subsystem if it was
+	 * off. Called only when {@link resolveAddressedAdvisor} found no live advisor,
+	 * so it never disturbs an already-attached target. Returns the canonical
+	 * advisor name once the entity is live (model resolved), else `undefined` — a
+	 * missing registry, no matching entity, an unresolvable record, or a roster
+	 * entry stuck at `no_model` all leave the message an ordinary prompt.
+	 *
+	 * Attaching rebuilds the whole roster (the build path has no incremental
+	 * append), which reseeds any peers to the current turn; existing entries are
+	 * preserved, including the implicit legacy `default` advisor.
+	 */
+	async attachAddressedEntity(token: string): Promise<string | undefined> {
+		const already = this.resolveAddressedAdvisor(token);
+		if (already) return already;
+
+		const slug = slugifyAdvisorName(token);
+		const lower = token.toLowerCase();
+		let entityName: string | undefined;
+		try {
+			const { entities } = await discoverEntities();
+			const match = entities.find(e => e.name.toLowerCase() === lower || slugifyAdvisorName(e.name) === slug);
+			entityName = match?.name;
+		} catch (error) {
+			logger.debug("advisor entity discovery failed for direct address", { token, err: String(error) });
+			return undefined;
+		}
+		if (!entityName) return undefined;
+
+		let resolved: ResolvedEntityConfig;
+		try {
+			resolved = await resolveEntityConfig(entityName);
+		} catch (error) {
+			logger.warn("failed to resolve addressed entity", { entity: entityName, err: String(error) });
+			return undefined;
+		}
+
+		const config: AdvisorConfig = {
+			name: resolved.name,
+			model: resolved.model?.[0],
+			tools: resolved.tools,
+			instructions: resolved.systemPrompt,
+			enabled: true,
+		};
+		const configSlug = slugifyAdvisorName(config.name);
+		// Preserve the current roster (materializing the implicit legacy `default`
+		// advisor only when the subsystem is already live) and add the entity.
+		const base: AdvisorConfig[] =
+			this.#advisorConfigs && this.#advisorConfigs.length > 0
+				? [...this.#advisorConfigs]
+				: this.#advisorEnabled
+					? [{ name: "default" }]
+					: [];
+		if (!base.some(c => slugifyAdvisorName(c.name) === configSlug)) base.push(config);
+		this.#advisorConfigs = base;
+
+		const wasEnabled = this.#advisorEnabled;
+		this.#advisorEnabled = true;
+		this.#stopAdvisorRuntime();
+		this.#buildAdvisorRuntime(true);
+
+		const advisorName = this.resolveAddressedAdvisor(token);
+		if (advisorName) {
+			this.#host.emitNotice(
+				"info",
+				`${wasEnabled ? "Attached" : "Started"} advisor "${advisorName}" from the entity registry.`,
+				"advisor",
+			);
+		}
+		return advisorName;
 	}
 
 	/**

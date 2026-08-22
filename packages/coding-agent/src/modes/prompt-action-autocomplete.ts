@@ -9,6 +9,13 @@ import {
 import { formatKeyHints, type KeybindingsManager } from "../config/keybindings";
 import { isSettingsInitialized, settings } from "../config/settings";
 import { applyEmojiCompletion, getEmojiSuggestions, isEmojiPrefix, tryEmojiInlineReplace } from "./emoji-autocomplete";
+import {
+	applyEntityMentionCompletion,
+	collapseMentionToSingleAt,
+	extractEntityMention,
+	getEntityMentionSuggestions,
+	isEntityMentionPrefix,
+} from "./entity-autocomplete";
 import { getGithubRefContext, getGithubRefSuggestions } from "./github-ref-autocomplete";
 import {
 	applyInternalUrlCompletion,
@@ -208,6 +215,27 @@ export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 			if (emojiSuggestions) return emojiSuggestions;
 		}
 
+		// `@@` opens the entity (persona/agent) picker; `@@@`+ is the escape hatch
+		// back to the file picker with a single `@` populated. A bare `@` stays the
+		// base provider's file mention, so only `@@`+ is intercepted here.
+		const entityMention = extractEntityMention(textBeforeCursor);
+		if (entityMention?.atCount === 2) {
+			const items = await getEntityMentionSuggestions(entityMention);
+			// No match closes the picker rather than falling through to file search.
+			return items.length > 0 ? { items, prefix: entityMention.token } : null;
+		}
+		if (entityMention && entityMention.atCount >= 3) {
+			const collapsed = collapseMentionToSingleAt(lines, cursorLine, cursorCol, entityMention);
+			const fileSuggestions = await this.#baseProvider.getSuggestions(
+				collapsed.lines,
+				cursorLine,
+				collapsed.cursorCol,
+			);
+			// Accept-time apply replaces the whole `@@@…` run with the single-`@`
+			// file value, so the returned prefix is the live token, not the collapse.
+			return fileSuggestions ? { items: fileSuggestions.items, prefix: entityMention.token } : null;
+		}
+
 		return this.#baseProvider.getSuggestions(lines, cursorLine, cursorCol);
 	}
 
@@ -253,6 +281,11 @@ export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 
 		if (isEmojiPrefix(prefix)) {
 			return applyEmojiCompletion(lines, cursorLine, cursorCol, item, prefix);
+		}
+		// `@@`+ items (entity picks and the `@@@` file escape) both replace the
+		// live `@`-run with the item's final value.
+		if (isEntityMentionPrefix(prefix)) {
+			return applyEntityMentionCompletion(lines, cursorLine, cursorCol, item, prefix);
 		}
 		return this.#baseProvider.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
 	}

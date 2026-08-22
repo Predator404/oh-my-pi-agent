@@ -3,8 +3,10 @@ import {
 	KeybindingsManager as AppKeybindingsManager,
 	setKeyHintPlatform,
 } from "@oh-my-pi/pi-coding-agent/config/keybindings";
+import { invalidateEntityMentionCache } from "@oh-my-pi/pi-coding-agent/modes/entity-autocomplete";
 import { createPromptActionAutocompleteProvider } from "@oh-my-pi/pi-coding-agent/modes/prompt-action-autocomplete";
 import { KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "@oh-my-pi/pi-tui";
+import { TempDir } from "@oh-my-pi/pi-utils";
 
 describe("prompt action autocomplete", () => {
 	beforeEach(() => {
@@ -275,5 +277,74 @@ describe("prompt action autocomplete", () => {
 		});
 
 		expect(provider.trySyncSlashCompletion("hello")).toBeNull();
+	});
+
+	describe("@@ entity + @@@ file-escape mentions", () => {
+		const originalRegistry = process.env.OMP_ENTITY_REGISTRY;
+		let registryDir: TempDir;
+		let projectDir: TempDir;
+
+		beforeEach(async () => {
+			registryDir = TempDir.createSync("@pi-pa-entity-");
+			projectDir = TempDir.createSync("@pi-pa-project-");
+			const entitiesDir = `${registryDir.path()}/entities`;
+			await Bun.write(
+				`${entitiesDir}/phi.md`,
+				"---\nname: phi\ndescription: Reviewer persona.\nrole: persona\nmemory:\n  backend: mnemopi\n  bank: phi\nvaultSection: personas/phi\n---\nYou are Phi.\n",
+			);
+			await Bun.write(`${projectDir.path()}/README.md`, "# readme\n");
+			process.env.OMP_ENTITY_REGISTRY = registryDir.path();
+			invalidateEntityMentionCache();
+		});
+
+		afterEach(async () => {
+			if (originalRegistry === undefined) delete process.env.OMP_ENTITY_REGISTRY;
+			else process.env.OMP_ENTITY_REGISTRY = originalRegistry;
+			invalidateEntityMentionCache();
+			await registryDir.remove();
+			await projectDir.remove();
+		});
+
+		function provider() {
+			return createPromptActionAutocompleteProvider({
+				commands: [],
+				basePath: projectDir.path(),
+				keybindings: AppKeybindingsManager.inMemory(),
+				copyCurrentLine: () => {},
+				copyPrompt: () => {},
+				undo: () => {},
+				moveCursorToMessageEnd: () => {},
+				moveCursorToMessageStart: () => {},
+				moveCursorToLineStart: () => {},
+				moveCursorToLineEnd: () => {},
+			});
+		}
+
+		it("`@@` opens the entity picker and inserts a @@<name>: address", async () => {
+			const p = provider();
+			const suggestions = await p.getSuggestions(["@@ph"], 0, 4);
+			expect(suggestions?.prefix).toBe("@@ph");
+			expect(suggestions?.items.map(i => i.value)).toEqual(["@@phi: "]);
+
+			const applied = p.applyCompletion(["@@ph"], 0, 4, suggestions!.items[0]!, "@@ph");
+			expect(applied.lines).toEqual(["@@phi: "]);
+		});
+
+		it("`@@@` escapes back to the file picker with a single-@ value", async () => {
+			const p = provider();
+			const suggestions = await p.getSuggestions(["@@@READ"], 0, 7);
+			expect(suggestions?.prefix).toBe("@@@READ");
+			const readme = suggestions?.items.find(i => i.value.includes("README.md"));
+			expect(readme?.value).toBe("@README.md");
+
+			const applied = p.applyCompletion(["@@@READ"], 0, 7, readme!, "@@@READ");
+			expect(applied.lines).toEqual(["@README.md"]);
+		});
+
+		it("a single `@` still lists files, not entities", async () => {
+			const suggestions = await provider().getSuggestions(["@READ"], 0, 5);
+			expect(suggestions?.items.some(i => i.value === "@README.md")).toBe(true);
+			expect(suggestions?.items.some(i => i.value === "@@phi: ")).toBe(false);
+		});
 	});
 });
