@@ -2418,6 +2418,7 @@ export class SessionManager {
 			method?: CompactionMethod;
 			providerReplayThroughEntryId?: string;
 			tokensAfter?: number;
+			speculativeSuffixStartId?: string;
 		} = {},
 	): string {
 		const entry: CompactionEntry<T> = {
@@ -2433,6 +2434,7 @@ export class SessionManager {
 			details: options.details,
 			fromExtension: options.fromExtension,
 			preserveData: options.preserveData,
+			speculativeSuffixStartId: options.speculativeSuffixStartId,
 		};
 		this.#recordEntry(entry);
 		return entry.id;
