@@ -16,6 +16,7 @@ import * as path from "node:path";
 import { getAgentDir, isRecord, logger, parseFrontmatter } from "@oh-my-pi/pi-utils";
 import type { AdvisorConfig } from "../advisor/config";
 import { parseArrayOrCSV, parseBoolean, parseModelList } from "../discovery/helpers";
+import { isValidThemeColor, type ThemeColor } from "../modes/theme/schema";
 import type { AgentSource } from "../task/types";
 import { parseConfiguredThinkingLevel } from "../thinking";
 import { normalizeToolNames } from "../tools/builtin-names";
@@ -187,6 +188,45 @@ function parseHosting(value: unknown, filePath: string): EntityHosting | undefin
 	return hosting;
 }
 
+/** Grapheme segmenter for validating an `icon` is exactly one display glyph. */
+const ICON_GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function parseIcon(value: unknown, filePath: string): string | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "string") {
+		throw new EntityValidationError(`Entity field "icon" must be a string`, filePath);
+	}
+	const icon = value.trim();
+	if (!icon) return undefined;
+	if (/\s/.test(icon)) {
+		throw new EntityValidationError(`Entity field "icon" must not contain whitespace`, filePath);
+	}
+	const graphemes = [...ICON_GRAPHEME_SEGMENTER.segment(icon)];
+	if (graphemes.length !== 1) {
+		throw new EntityValidationError(
+			`Entity field "icon" must be a single display glyph; got ${graphemes.length} in "${icon}"`,
+			filePath,
+		);
+	}
+	return icon;
+}
+
+function parseColor(value: unknown, filePath: string): ThemeColor | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "string") {
+		throw new EntityValidationError(`Entity field "color" must be a string`, filePath);
+	}
+	const color = value.trim();
+	if (!color) return undefined;
+	if (!isValidThemeColor(color)) {
+		throw new EntityValidationError(
+			`Entity field "color" must be a theme-color token (e.g. accent, success, warning, error); got "${color}"`,
+			filePath,
+		);
+	}
+	return color;
+}
+
 /**
  * Validate + normalize entity-record frontmatter into {@link EntityRecordMeta}.
  * Throws {@link EntityValidationError} on any schema or retention-policy
@@ -228,6 +268,8 @@ export function parseEntityMeta(
 		name,
 		description,
 		role,
+		icon: parseIcon(frontmatter.icon, filePath),
+		color: parseColor(frontmatter.color, filePath),
 		model,
 		thinkingLevel,
 		tools,
@@ -369,6 +411,8 @@ export async function resolveEntityConfig(
 		name: record.name,
 		description: record.description,
 		role: record.role,
+		icon: record.icon,
+		color: record.color,
 		model: record.model,
 		thinkingLevel: record.thinkingLevel,
 		systemPrompt: record.systemPrompt,

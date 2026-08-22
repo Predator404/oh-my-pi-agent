@@ -2,7 +2,7 @@ import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { Effort } from "@oh-my-pi/pi-ai";
 import { colorLuma, logger, relativeLuminance } from "@oh-my-pi/pi-utils";
 import chalk from "@oh-my-pi/pi-utils/chalk";
-import { bgAnsi, colorToAnsi, fgAnsi, resolveToHex } from "./color";
+import { bgAnsi, colorToAnsi, fgAnsi, mixHex, resolveToHex } from "./color";
 import type { ColorMode, ThemeBg, ThemeColor } from "./schema";
 import {
 	SPINNER_FRAMES,
@@ -317,6 +317,20 @@ export class Theme {
 		const ansi = this.#bgColors[color];
 		if (!ansi) throw new Error(`Unknown theme background color: ${color}`);
 		return ansi;
+	}
+
+	/**
+	 * Background ANSI for a per-entity "speech bubble": the entity's foreground
+	 * color mixed lightly over the custom-message card background, so each
+	 * entity's turns read as its own tinted block while staying legible. Falls
+	 * back to the plain `customMessageBg` when the color has no resolved hex.
+	 */
+	getBubbleBgAnsi(color: ThemeColor): string {
+		const colorHex = this.#hexFgColors[color];
+		if (!colorHex || !colorHex.startsWith("#")) return this.getBgAnsi("customMessageBg");
+		const light = this.statusLineLuminance !== undefined && this.statusLineLuminance > 0.5;
+		const baseHex = this.#hexBgColors.customMessageBg || (light ? "#ffffff" : "#111111");
+		return bgAnsi(mixHex(baseHex, colorHex, 0.16), this.mode);
 	}
 
 	/**

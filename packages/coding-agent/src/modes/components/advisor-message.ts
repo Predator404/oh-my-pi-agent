@@ -8,6 +8,7 @@ import {
 	wrapTextWithAnsi,
 } from "../../tools/render-utils";
 import { Ellipsis, truncateToWidth } from "../../tui";
+import { isValidThemeColor } from "../theme/schema";
 import type { Theme } from "../theme/theme";
 
 const COLLAPSED_NOTES = 3;
@@ -65,16 +66,21 @@ export function createAdvisorMessageCard(
 			const railGlyph = uiTheme.symbol("advisor.rail");
 			const shown = expanded ? notes : notes.slice(0, COLLAPSED_NOTES);
 			for (const entry of shown) {
+				const color = entry.color && isValidThemeColor(entry.color) ? entry.color : undefined;
+				const glyph = entry.icon && uiTheme.getSymbolPreset() !== "ascii" ? `${entry.icon} ` : "";
+				const bubbleBg = color ? uiTheme.getBubbleBgAnsi(color) : undefined;
 				const badge = entry.severity
 					? `${formatBadge(entry.severity, severityColor(entry.severity), uiTheme)} `
 					: "";
-				// Multi-advisor: attribute the note to its source. The implicit
-				// single ("default") advisor renders unlabeled, as before.
-				const who =
-					entry.advisor && entry.advisor !== "default"
-						? `${uiTheme.fg("dim", `[${replaceTabs(entry.advisor)}]`)} `
-						: "";
-				const rail = uiTheme.fg(severityColor(entry.severity), railGlyph);
+				// Multi-advisor: attribute the note to its source, using the entity's
+				// glyph + color when the advisor maps to a registry entity. The
+				// implicit single ("default") advisor renders unlabeled, as before.
+				let who = "";
+				if (entry.advisor && entry.advisor !== "default") {
+					const label = `${glyph}${replaceTabs(entry.advisor)}`;
+					who = color ? `${uiTheme.fg(color, uiTheme.bold(label))} ` : `${uiTheme.fg("dim", `[${label}]`)} `;
+				}
+				const rail = color ? uiTheme.fg(color, railGlyph) : uiTheme.fg(severityColor(entry.severity), railGlyph);
 				const quoteWidth = visibleWidth(`  ${railGlyph} `);
 				const badgeWidth = visibleWidth(badge);
 				const whoWidth = visibleWidth(who);
@@ -92,9 +98,16 @@ export function createAdvisorMessageCard(
 					}
 				}
 
+				const bubbleWidth = Math.min(NOTE_LINE_WIDTH, width);
 				bodyLines.forEach((line, index) => {
 					const prefix = index === 0 ? `${badge}${who}` : "";
-					lines.push(`  ${rail} ${prefix}${uiTheme.fg("customMessageText", replaceTabs(line))}`);
+					const content = `  ${rail} ${prefix}${uiTheme.fg("customMessageText", replaceTabs(line))}`;
+					if (bubbleBg) {
+						const pad = " ".repeat(Math.max(0, bubbleWidth - visibleWidth(content)));
+						lines.push(`${bubbleBg}${content}${pad}\x1b[49m`);
+					} else {
+						lines.push(content);
+					}
 				});
 			}
 			const hidden = notes.length - shown.length;
