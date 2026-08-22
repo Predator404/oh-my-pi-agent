@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { Agent } from "@oh-my-pi/pi-agent-core";
-import type { Model } from "@oh-my-pi/pi-ai";
+import { Effort, type Model } from "@oh-my-pi/pi-ai";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
@@ -94,5 +94,19 @@ describe("advisor direct-address attach", () => {
 		expect(attached).toBeUndefined();
 		expect(session.isAdvisorEnabled()).toBe(false);
 		expect(session.isAdvisorActive()).toBe(false);
+	});
+
+	it("carries the entity's thinkingLevel onto the attached advisor", async () => {
+		// A persona with its own model + a standalone thinkingLevel field. The
+		// advisor config has no thinking field, so attach must fold the level into
+		// the model selector or the effort is lost.
+		await Bun.write(
+			path.join(tempDir.path(), "entities", "sage.md"),
+			"---\nname: sage\ndescription: Deep reviewer.\nrole: persona\nmemory:\n  backend: mnemopi\n  bank: sage\nvaultSection: personas/sage\nmodel:\n  - anthropic/claude-sonnet-4-5\nthinkingLevel: high\n---\nYou are Sage.\n",
+		);
+
+		const attached = await session.attachAddressedAdvisor("sage");
+		expect(attached).toBe("sage");
+		expect(session.getAdvisorAgent()?.state.thinkingLevel).toBe(Effort.High);
 	});
 });
