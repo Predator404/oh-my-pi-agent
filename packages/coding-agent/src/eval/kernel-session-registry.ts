@@ -89,6 +89,8 @@ interface KernelSessionRegistryDescriptor<
 interface KernelSessionRegistry<TOptions extends KernelSessionRegistryOptions, TResult> {
 	disposeAll(): Promise<void>;
 	disposeByOwner(ownerId: string): Promise<void>;
+	/** True when a live (or still-starting) kernel session is currently held for this owner. Never spawns. */
+	hasOwner(ownerId: string): boolean;
 	executeOnSession(code: string, cwd: string, options: TOptions): Promise<TResult>;
 }
 
@@ -331,6 +333,16 @@ export function createKernelSessionRegistry<
 		}
 	}
 
+	function hasOwner(ownerId: string): boolean {
+		for (const session of sessions.values()) {
+			if (session.ownerIds.has(ownerId)) return true;
+		}
+		for (const starting of startingSessions.values()) {
+			if (starting.ownerIds.has(ownerId)) return true;
+		}
+		return false;
+	}
+
 	async function executeOnSession(code: string, cwd: string, options: TOptions): Promise<TResult> {
 		const sessionId = options.sessionId ?? `session:${cwd}`;
 		const sessionKey = resolveOwnerScopedSessionKey({
@@ -394,5 +406,5 @@ export function createKernelSessionRegistry<
 		}
 	}
 
-	return { disposeAll, disposeByOwner, executeOnSession };
+	return { disposeAll, disposeByOwner, hasOwner, executeOnSession };
 }
