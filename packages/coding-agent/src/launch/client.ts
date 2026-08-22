@@ -63,6 +63,12 @@ export interface DaemonBrokerClient {
 	onAgentEvent?(owner: string, sink: (envelope: AgentControlEventEnvelope) => void): () => void;
 	/** Canonical project directory or synthetic directory identifying a global scope. */
 	readonly projectDir: string;
+	/**
+	 * Broker runtime directory (holds broker.pid/token/socket) for this scope.
+	 * Optional so lightweight test doubles need not supply it; the real socket
+	 * client always does.
+	 */
+	readonly runtimeDir?: string;
 	request(operation: DaemonOperation, signal?: AbortSignal): Promise<DaemonRpcResult>;
 	close(): void;
 }
@@ -141,6 +147,10 @@ class SocketDaemonClient implements DaemonBrokerClient {
 		this.#endpoint = daemonBrokerEndpoint(runtimeDir);
 		this.#token = token;
 		this.#idleGraceMs = options.idleGraceMs;
+	}
+
+	get runtimeDir(): string {
+		return this.#runtimeDir;
 	}
 
 	async request(operation: DaemonOperation, signal?: AbortSignal): Promise<DaemonRpcResult> {

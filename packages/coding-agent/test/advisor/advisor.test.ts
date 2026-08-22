@@ -6931,7 +6931,6 @@ describe("advisor", () => {
 			expect(text).toContain("truncated.");
 		});
 
-<<<<<<< HEAD
 		it("caps collapsed note rows at advisorCollapsedLines and shows every row when expanded", async () => {
 			const uiTheme = await getThemeByName("dark");
 			if (!uiTheme) throw new Error("theme unavailable");
@@ -6948,7 +6947,8 @@ describe("advisor", () => {
 			} finally {
 				setChatTranscriptDisplayPreferences({ advisorCollapsedLines: 0 });
 			}
-=======
+		});
+
 		it("renders the entity glyph, tinted label, and bubble background for an icon/color note", async () => {
 			const uiTheme = await getThemeByName("dark");
 			if (!uiTheme) throw new Error("theme unavailable");
@@ -6976,7 +6976,6 @@ describe("advisor", () => {
 			const raw = card.render(80).join("\n");
 			expect(raw).not.toContain(uiTheme.getBubbleBgAnsi("accent"));
 			expect(strip([raw])).toContain("[Architecture]");
->>>>>>> ad0f06e720 (feat(oma/entity): per-entity icon & color across in-process and daemon-wire surfaces)
 		});
 	});
 

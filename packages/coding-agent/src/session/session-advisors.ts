@@ -87,12 +87,8 @@ import { serviceTierForAllFamilies, serviceTierSettingToTier } from "../config/s
 import type { Settings } from "../config/settings";
 import { CursorExecHandlers, type CursorMcpResourceAdapter } from "../cursor";
 import { bridgeToolMap } from "../cursor-bridge-tools";
-<<<<<<< HEAD
-import { estimateContextToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
-=======
 import { discoverEntities } from "../entity/loader";
-import { estimateToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
->>>>>>> ad0f06e720 (feat(oma/entity): per-entity icon & color across in-process and daemon-wire surfaces)
+import { estimateContextToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
 import type { PlanModeState } from "../plan-mode/state";
 import advisorBoundaryGuidance from "../prompts/advisor/boundary-guidance.md" with { type: "text" };
 import advisorSystemPrompt from "../prompts/advisor/system.md" with { type: "text" };
@@ -1783,7 +1779,7 @@ export class SessionAdvisors {
 		// The implicit single ("default") advisor stamps no source name, so its
 		// agent-facing `<advisory>` bytes stay identical to the pre-multi-advisor path.
 		const source = advisor.slug ? advisor.name : undefined;
-<<<<<<< HEAD
+		const visual = this.#entityVisualByName?.[advisor.name.toLowerCase()] ?? this.#entityVisualByName?.[advisor.slug];
 		// Inside a terminal-boundary callback (deferred flush + catch-up wait) the
 		// loop still reports streaming, so a delivered note would steer a fresh turn
 		// — waking the primary to act on advice produced against work that already
@@ -1799,14 +1795,12 @@ export class SessionAdvisors {
 				severity,
 				advisor: source,
 				turn: turn ?? this.#advisorPrimaryTurnsCompleted,
+				icon: visual?.icon,
+				color: visual?.color,
 			});
 			return;
 		}
-		const notes: AdvisorNote[] = [{ note, severity, advisor: source }];
-=======
-		const visual = this.#entityVisualByName?.[advisor.name.toLowerCase()] ?? this.#entityVisualByName?.[advisor.slug];
-		const interrupting = isInterruptingSeverity(severity);
->>>>>>> ad0f06e720 (feat(oma/entity): per-entity icon & color across in-process and daemon-wire surfaces)
+		const notes: AdvisorNote[] = [{ note, severity, advisor: source, icon: visual?.icon, color: visual?.color }];
 		const terminalAnswerNoQueuedWork = this.#hasTerminalTextAnswerWithoutQueuedWork();
 		// A note that lands after the boundary window closed (catch-up off, or a
 		// review slower than its wait) gets exactly what the merged boundary flush
@@ -1839,7 +1833,6 @@ export class SessionAdvisors {
 			});
 			return;
 		}
-<<<<<<< HEAD
 		this.#deliverAdvisorBatch(notes, formatAdvisorBatchContent(notes), channel === "steer");
 	}
 
@@ -1916,10 +1909,6 @@ export class SessionAdvisors {
 	 *    agent-initiated turn as busy, so idle triggers are refused (#5628 review).
 	 */
 	#deliverAdvisorBatch(notes: AdvisorNote[], content: string, steer: boolean): void {
-=======
-		const notes: AdvisorNote[] = [{ note, severity, advisor: source, icon: visual?.icon, color: visual?.color }];
-		const content = formatAdvisorBatchContent(notes);
->>>>>>> ad0f06e720 (feat(oma/entity): per-entity icon & color across in-process and daemon-wire surfaces)
 		const details = { notes } satisfies AdvisorMessageDetails;
 		if (steer) {
 			// Plan mode preserves would-be-steering advice as a visible card:
