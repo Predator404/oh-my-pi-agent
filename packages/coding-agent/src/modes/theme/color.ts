@@ -77,6 +77,27 @@ export function resolveToHex(value: string | number, isLight: boolean): string {
 }
 
 /**
+ * Mix two `#rrggbb` hex colors. `t` is the weight of `b` over `a` (0..1).
+ * Non-hex inputs fall back to `a` so callers never emit a broken escape.
+ */
+export function mixHex(a: string, b: string, t: number): string {
+	const pa = parseHexRgb(a);
+	const pb = parseHexRgb(b);
+	if (!pa || !pb) return a;
+	const w = Math.max(0, Math.min(1, t));
+	const ch = (x: number, y: number): number => Math.round(x + (y - x) * w);
+	const hex = (n: number): string => n.toString(16).padStart(2, "0");
+	return `#${hex(ch(pa[0], pb[0]))}${hex(ch(pa[1], pb[1]))}${hex(ch(pa[2], pb[2]))}`;
+}
+
+function parseHexRgb(value: string): [number, number, number] | undefined {
+	const m = /^#?([0-9a-fA-F]{6})$/.exec(value.trim());
+	if (!m) return undefined;
+	const int = Number.parseInt(m[1], 16);
+	return [(int >> 16) & 255, (int >> 8) & 255, int & 255];
+}
+
+/**
  * Convert a 256-color index to hex string.
  * Indices 0-15: basic colors (approximate)
  * Indices 16-231: 6x6x6 color cube

@@ -34,6 +34,10 @@ export interface AdvisorNote {
 	severity?: AdvisorSeverity;
 	/** Which configured advisor produced this note (omitted for the default advisor). */
 	advisor?: string;
+	/** Entity display glyph, when the advisor maps to a registry entity. */
+	icon?: string;
+	/** Entity theme-color token, when the advisor maps to a registry entity. */
+	color?: string;
 }
 
 /** Details payload on the batched `advisor` custom message rendered in the transcript. */

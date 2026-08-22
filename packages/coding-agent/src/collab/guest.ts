@@ -613,6 +613,8 @@ export class CollabGuestLink {
 				this.agentRegistry.register({
 					id: snap.id,
 					displayName: snap.displayName,
+					icon: snap.icon,
+					color: snap.color,
 					kind: snap.kind,
 					parentId: snap.parentId,
 					session: null,
@@ -626,6 +628,8 @@ export class CollabGuestLink {
 				ref.createdAt = snap.createdAt;
 				ref.lastActivity = snap.lastActivity;
 				ref.displayName = snap.displayName;
+				ref.icon = snap.icon;
+				ref.color = snap.color;
 			}
 			this.#agentHasTranscript.set(snap.id, snap.hasSessionFile);
 		}

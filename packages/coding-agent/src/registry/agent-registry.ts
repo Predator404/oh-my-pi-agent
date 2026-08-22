@@ -72,6 +72,10 @@ export interface AgentHistorySummary {
 export interface AgentRef {
 	id: string;
 	displayName: string;
+	/** Optional display glyph for an entity-backed agent (empty for plain sub/main). */
+	icon?: string;
+	/** Optional theme-color token tinting the agent's label/marker. */
+	color?: string;
 	kind: AgentKind;
 	parentId?: string;
 	status: AgentStatus;
@@ -99,6 +103,8 @@ type RegistryListener = (event: RegistryEvent) => void;
 export interface RegisterInput {
 	id: string;
 	displayName: string;
+	icon?: string;
+	color?: string;
 	kind: AgentKind;
 	parentId?: string;
 	session: AgentSession | null;
@@ -146,6 +152,8 @@ export class AgentRegistry {
 		const ref: AgentRef = {
 			id: input.id,
 			displayName: input.displayName,
+			icon: input.icon,
+			color: input.color,
 			kind: input.kind,
 			parentId: input.parentId,
 			status: input.status ?? "running",
