@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Blank or whitespace-only `mnemopi.dbPath` now resolves to persistent agent storage instead of a volatile in-memory bank ([#9360](https://github.com/can1357/oh-my-pi/issues/9360)).
+
 ## [18.0.0] - 2026-08-22
 
 ### Added
