@@ -88,6 +88,13 @@ export interface EntityRecordMeta {
 	memory: EntityMemory;
 	/** Owned vault subtree, e.g. `agents/<name>` | `personas/<name>` (SPEC §7). */
 	vaultSection: string;
+	/**
+	 * Home registry id (ADR 0004) — the registry this record belongs to and a key
+	 * into the registries manifest. Populated by the loader from the registry the
+	 * record was found in; frontmatter MAY declare it, but a declared value must
+	 * match the record's actual registry.
+	 */
+	registry: string;
 	watchdog?: EntityWatchdog;
 	hosting?: EntityHosting;
 	/** Provenance: registry records are user-owned data (repo 2). */
@@ -128,6 +135,8 @@ export interface ResolvedEntityConfig {
 	autoloadSkills?: string[];
 	memory: EntityMemory;
 	vaultSection: string;
+	/** Home registry id (ADR 0004): resolves the writable vault root + readable set + records root. */
+	registry: string;
 	watchdog?: EntityWatchdog;
 	hosting?: EntityHosting;
 	/**

@@ -64,6 +64,37 @@ describe("createEntityRecord", () => {
 			/curated-only|autoRetain/,
 		);
 	});
+
+	it("writes a private-registry record with a correctly namespaced bank", async () => {
+		const secretRoot = path.join(root, "secret");
+		const manifestPath = path.join(root, "registries.json");
+		await fs.writeFile(
+			manifestPath,
+			JSON.stringify({
+				oma: { root: path.join(root, "oma"), visibility: "public" },
+				secret: { root: secretRoot, visibility: "private" },
+			}),
+			"utf8",
+		);
+		const result = await createEntityRecord(
+			"phi",
+			{ ...persona, memory: { bank: "secret/phi" } },
+			{ registry: "secret", manifestPath },
+		);
+		expect(result.created).toBe(true);
+		expect(result.filePath).toBe(path.join(secretRoot, "entities", "phi.md"));
+		const parsed = parseEntityRecord(result.filePath, await fs.readFile(result.filePath, "utf8"), "user", "secret");
+		expect(parsed.memory.bank).toBe("secret/phi");
+	});
+
+	it("rejects a private-registry record whose bank is not namespaced", async () => {
+		const secretRoot = path.join(root, "secret2");
+		const manifestPath = path.join(root, "registries2.json");
+		await fs.writeFile(manifestPath, JSON.stringify({ secret: { root: secretRoot, visibility: "private" } }), "utf8");
+		expect(
+			createEntityRecord("phi", { ...persona, memory: { bank: "phi" } }, { registry: "secret", manifestPath }),
+		).rejects.toThrow(/must be namespaced/);
+	});
 });
 
 describe("updateEntityRecordFields", () => {

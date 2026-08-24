@@ -146,17 +146,17 @@ export interface EntityCommand {
 export interface EntityCommandDeps {
 	write(text: string): void;
 	connectClient(): Promise<EntityRuntimeClient>;
-	discover(options: { registryRoot?: string }): Promise<EntityDiscoveryResult>;
-	resolve(name: string, options: { registryRoot?: string }): Promise<ResolvedEntityConfig>;
+	discover(options: { registryRoot?: string; registry?: string }): Promise<EntityDiscoveryResult>;
+	resolve(name: string, options: { registryRoot?: string; registry?: string }): Promise<ResolvedEntityConfig>;
 	createRecord(
 		name: string,
 		fields: CreateEntityFields,
-		options: { registryRoot?: string; force?: boolean },
+		options: { registryRoot?: string; registry?: string; force?: boolean },
 	): Promise<WriteEntityRecordResult>;
 	updateRecord(
 		name: string,
 		updates: Array<{ key: string; value: string }>,
-		options: { registryRoot?: string },
+		options: { registryRoot?: string; registry?: string },
 	): Promise<WriteEntityRecordResult>;
 	runSetup(options: EntitySetupOptions): Promise<SetupReport>;
 	readStdin(): Promise<string>;
@@ -275,13 +275,15 @@ function assistantReplyText(message: AgentMessage): string {
 /** Dispatch one `omp entity` invocation. Throws {@link EntityCommandUsageError} on bad input. */
 export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDeps): Promise<void> {
 	const { action, args, flags } = cmd;
-	const registryRoot = flags.registry;
+	const registry = flags.registry;
 	const json = flags.json;
 
 	switch (action) {
 		case "roster":
 		case "list": {
-			const { entities, errors } = await deps.discover({ registryRoot });
+			const discovered = await deps.discover({ registry });
+			const errors = discovered.errors;
+			const entities = registry ? discovered.entities.filter(e => e.registry === registry) : discovered.entities;
 			if (json) {
 				emit(deps, true, { entities, errors }, "");
 				return;
@@ -289,7 +291,7 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 			if (entities.length === 0) deps.write("No entities defined.\n");
 			for (const e of entities) {
 				deps.write(
-					`${e.name}  (${e.role})  ${e.model?.join(",") ?? "—"}  bank=${e.memory.bank}  §${e.vaultSection}\n`,
+					`${e.name}  (${e.role})  @${e.registry ?? "—"}  ${e.model?.join(",") ?? "—"}  bank=${e.memory.bank}  §${e.vaultSection}\n`,
 				);
 			}
 			for (const err of errors) deps.write(`! ${err.filePath}: ${err.error}\n`);
@@ -297,9 +299,10 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 		}
 		case "show": {
 			const name = requireArg(args, 0, "name");
-			const config = await deps.resolve(name, { registryRoot });
+			const config = await deps.resolve(name, { registry });
 			if (json) return emit(deps, true, config, "");
 			deps.write(`${config.name}  (${config.role})\n`);
+			deps.write(`  registry    : ${config.registry ?? "—"}\n`);
 			deps.write(`  description : ${config.description}\n`);
 			deps.write(`  icon/color  : ${config.icon ?? "—"} / ${config.color ?? "—"}\n`);
 			deps.write(`  model       : ${config.model?.join(",") ?? "—"}\n`);
@@ -337,7 +340,7 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 				vaultSection: flags.vaultSection,
 				hosting: flags.endpoint ? { modelEndpoint: flags.endpoint } : undefined,
 			};
-			const result = await deps.createRecord(name, fields, { registryRoot, force: flags.force });
+			const result = await deps.createRecord(name, fields, { registry, force: flags.force });
 			return emit(
 				deps,
 				json,
@@ -362,7 +365,7 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 			}
 			if (updates.length === 0) {
 				// Get: print the current resolved config.
-				const config = await deps.resolve(name, { registryRoot });
+				const config = await deps.resolve(name, { registry });
 				return emit(
 					deps,
 					json,
@@ -370,7 +373,7 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 					`${name}: ${config.role}, model=${config.model?.join(",") ?? "—"}, bank=${config.memory.bank}, §${config.vaultSection}`,
 				);
 			}
-			const result = await deps.updateRecord(name, updates, { registryRoot });
+			const result = await deps.updateRecord(name, updates, { registry });
 			return emit(
 				deps,
 				json,
@@ -381,7 +384,6 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 		case "setup": {
 			const report = await deps.runSetup({
 				registrySource: flags.registrySource,
-				registryRoot: flags.registry,
 				vaultLocation: flags.vault,
 				force: flags.force,
 				registerEndpoints: !flags.noEndpoints,
@@ -400,7 +402,7 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 		case "daemon":
 			return runDaemonAction(args, flags, deps, json);
 		default:
-			await runRuntimeAction(action, args, flags, deps, json, registryRoot);
+			await runRuntimeAction(action, args, flags, deps, json, registry);
 	}
 }
 
@@ -411,11 +413,11 @@ async function runRuntimeAction(
 	flags: EntityCommandFlags,
 	deps: EntityCommandDeps,
 	json: boolean | undefined,
-	registryRoot: string | undefined,
+	registry: string | undefined,
 ): Promise<void> {
 	const client = await deps.connectClient();
 	try {
-		await runRuntimeDispatch(action, args, flags, deps, json, client, registryRoot);
+		await runRuntimeDispatch(action, args, flags, deps, json, client, registry);
 	} finally {
 		// One-shot CLI: drop the persistent broker socket so the process exits
 		// cleanly (detach-and-return). The detached broker + resident worker
@@ -531,7 +533,7 @@ async function runRuntimeDispatch(
 	deps: EntityCommandDeps,
 	json: boolean | undefined,
 	client: EntityRuntimeClient,
-	_registryRoot: string | undefined,
+	_registry: string | undefined,
 ): Promise<void> {
 	switch (action) {
 		case "spawn": {
