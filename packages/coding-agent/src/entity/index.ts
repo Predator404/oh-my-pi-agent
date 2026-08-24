@@ -5,5 +5,6 @@
 export * from "./loader";
 export * from "./mcp-wiring";
 export * from "./record-writer";
+export * from "./registries";
 export * from "./schema";
 export * from "./setup";

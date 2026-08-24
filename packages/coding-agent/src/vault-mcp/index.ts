@@ -16,7 +16,12 @@ export {
 	TransformersEmbedder,
 } from "./embedder";
 export { type Backlink, type ForwardLink, VaultGraph } from "./graph";
-export { type VaultMcpServerEntry, vaultMcpServerConfig, vaultServerModulePath } from "./register";
+export {
+	type VaultMcpServerEntry,
+	type VaultReadableRoot,
+	vaultMcpServerConfig,
+	vaultServerModulePath,
+} from "./register";
 export { bridgeFromArgv, callTool, handleJsonRpc, listTools, main, runStdio, warmCache } from "./server";
 export {
 	type EmbeddingEntry,
@@ -39,6 +44,7 @@ export {
 export {
 	type Connections,
 	type NoteHit,
+	type ReadonlyRoot,
 	resolveVaultRoot,
 	VaultBridge,
 	type VaultBridgeOptions,

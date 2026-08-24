@@ -18,9 +18,10 @@ import {
 	ENTITY_RECORDS_SUBDIR,
 	type EntityRegistryOptions,
 	EntityValidationError,
-	getEntityRegistryRoot,
+	enforceBankNamespace,
 	parseEntityRecord,
 } from "./loader";
+import { DEFAULT_REGISTRY_ID, getRegistry, loadRegistryManifest, type RegistryVisibility } from "./registries";
 import type { EntityRole } from "./schema";
 
 /** Fields accepted when scaffolding a new entity record. */
@@ -51,8 +52,36 @@ export interface WriteEntityRecordResult {
 	created: boolean;
 }
 
-function recordPath(name: string, options: EntityRegistryOptions): string {
-	return path.join(getEntityRegistryRoot(options), ENTITY_RECORDS_SUBDIR, `${name}.md`);
+/**
+ * Where a write lands. Either an explicit single `registryRoot` (legacy) or a
+ * `registry` id resolved against the manifest (ADR 0004). Manifest source is the
+ * preloaded `manifest` when given, else the file at `manifestPath`/env/default.
+ */
+export type WriteRegistryOptions = EntityRegistryOptions & { registry?: string };
+
+/** The registry a write targets: its id, resolved root, and read exposure. */
+interface TargetRegistry {
+	id: string;
+	root: string;
+	visibility: RegistryVisibility;
+}
+
+/**
+ * Resolve the registry a record write targets. An explicit `registryRoot` pins a
+ * single public root (legacy id {@link DEFAULT_REGISTRY_ID}); otherwise the
+ * `registry` id (default {@link DEFAULT_REGISTRY_ID}) is looked up in the manifest.
+ */
+async function resolveTargetRegistry(options: WriteRegistryOptions): Promise<TargetRegistry> {
+	if (options.registryRoot?.trim()) {
+		return { id: DEFAULT_REGISTRY_ID, root: path.resolve(options.registryRoot.trim()), visibility: "public" };
+	}
+	const manifest = options.manifest ?? (await loadRegistryManifest({ manifestPath: options.manifestPath }));
+	const entry = getRegistry(manifest, options.registry ?? DEFAULT_REGISTRY_ID);
+	return { id: entry.id, root: entry.root, visibility: entry.visibility };
+}
+
+function recordPath(name: string, root: string): string {
+	return path.join(root, ENTITY_RECORDS_SUBDIR, `${name}.md`);
 }
 
 /** Serialize frontmatter + prompt body into an entity-record Markdown file. */
@@ -69,12 +98,13 @@ export function serializeEntityRecord(frontmatter: Record<string, unknown>, body
 export async function createEntityRecord(
 	name: string,
 	fields: CreateEntityFields,
-	options: EntityRegistryOptions & { force?: boolean } = {},
+	options: WriteRegistryOptions & { force?: boolean } = {},
 ): Promise<WriteEntityRecordResult> {
 	if (!ENTITY_NAME_PATTERN.test(name)) {
 		throw new EntityValidationError(`Illegal entity name "${name}" — must match ${ENTITY_NAME_PATTERN}`);
 	}
-	const filePath = recordPath(name, options);
+	const registry = await resolveTargetRegistry(options);
+	const filePath = recordPath(name, registry.root);
 	const vaultSection = fields.vaultSection ?? `${fields.role === "agent" ? "agents" : "personas"}/${name}`;
 	const frontmatter: Record<string, unknown> = {
 		name,
@@ -96,8 +126,9 @@ export async function createEntityRecord(
 	if (fields.hosting?.modelEndpoint) frontmatter.hosting = { modelEndpoint: fields.hosting.modelEndpoint };
 
 	const content = serializeEntityRecord(frontmatter, fields.systemPrompt);
-	// Validate + enforce policy before touching disk.
-	parseEntityRecord(filePath, content, "user");
+	// Validate + enforce policy (schema, retention, declared-registry, bank namespace) before disk.
+	const record = parseEntityRecord(filePath, content, "user", registry.id);
+	enforceBankNamespace(record.memory.bank, registry.id, registry.visibility, filePath);
 
 	// Distinguish a fresh create from a forced overwrite so `created` is honest.
 	let existedBefore = false;
@@ -197,9 +228,10 @@ export function applyEntityFieldUpdate(frontmatter: Record<string, unknown>, key
 export async function updateEntityRecordFields(
 	name: string,
 	updates: Array<{ key: string; value: string }>,
-	options: EntityRegistryOptions = {},
+	options: WriteRegistryOptions = {},
 ): Promise<WriteEntityRecordResult> {
-	const filePath = recordPath(name, options);
+	const registry = await resolveTargetRegistry(options);
+	const filePath = recordPath(name, registry.root);
 	let content: string;
 	try {
 		content = await fs.readFile(filePath, "utf8");
@@ -210,8 +242,9 @@ export async function updateEntityRecordFields(
 	const { frontmatter, body } = parseFrontmatter(content, { location: filePath, level: "fatal" });
 	for (const { key, value } of updates) applyEntityFieldUpdate(frontmatter, key, value);
 	const next = serializeEntityRecord(frontmatter, body);
-	// Re-validate the patched record (policy + schema) before persisting.
-	const validated = parseEntityRecord(filePath, next, "user");
+	// Re-validate the patched record (schema, policy, declared-registry, bank namespace) before persisting.
+	const validated = parseEntityRecord(filePath, next, "user", registry.id);
+	enforceBankNamespace(validated.memory.bank, registry.id, registry.visibility, filePath);
 	if (validated.name !== name) {
 		throw new EntityValidationError(
 			`Patched record name "${validated.name}" no longer matches filename "${name}.md"`,

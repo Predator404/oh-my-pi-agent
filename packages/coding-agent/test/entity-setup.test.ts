@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { runEntitySetup, VAULT_SECTION_DIRS } from "@oh-my-pi/pi-coding-agent/entity";
+import { rewriteVaultPointerStubs, runEntitySetup, VAULT_SECTION_DIRS } from "@oh-my-pi/pi-coding-agent/entity";
 import { YAML } from "bun";
 
 let root: string;
@@ -205,5 +205,136 @@ describe("runEntitySetup — conflicts", () => {
 		// User data survives even with --force.
 		expect((await fs.lstat(realDir)).isDirectory()).toBe(true);
 		expect(await fs.readFile(path.join(realDir, "important.md"), "utf8")).toBe("user data");
+	});
+});
+
+describe("runEntitySetup — registry domains (ADR 0004)", () => {
+	it("writes a valid multi-registry manifest and is a no-op on re-run", async () => {
+		const manifestPath = path.join(root, "registries.json");
+		const omaRoot = path.join(root, "oma-reg");
+		const secretRoot = path.join(root, "secret-reg");
+		const opts = {
+			homeDir: home,
+			agentDir,
+			registrySource: omaRoot,
+			manifestPath,
+			registries: [
+				{ id: "oma", root: omaRoot, visibility: "public" as const },
+				{ id: "secret", root: secretRoot, visibility: "private" as const },
+			],
+		};
+
+		const first = await runEntitySetup(opts);
+		expect(first.ok).toBe(true);
+		expect(first.manifestPath).toBe(path.resolve(manifestPath));
+		expect(first.steps.find(s => s.id === "registries-manifest")?.status).toBe("created");
+
+		const written = JSON.parse(await fs.readFile(manifestPath, "utf8")) as Record<
+			string,
+			{ visibility: string; root: string }
+		>;
+		expect(Object.keys(written).sort()).toEqual(["oma", "secret"]);
+		expect(written.secret.visibility).toBe("private");
+
+		const second = await runEntitySetup(opts);
+		expect(second.ok).toBe(true);
+		expect(second.steps.filter(s => s.status === "created" || s.status === "updated")).toEqual([]);
+		expect(second.steps.find(s => s.id === "registries-manifest")?.status).toBe("exists");
+	});
+
+	it("refuses to clobber a conflicting existing manifest", async () => {
+		const manifestPath = path.join(root, "registries.json");
+		const existing = JSON.stringify({ oma: { root: path.join(root, "other"), visibility: "public" } });
+		await fs.writeFile(manifestPath, existing, "utf8");
+
+		const report = await runEntitySetup({
+			homeDir: home,
+			agentDir,
+			registrySource,
+			manifestPath,
+			registries: [{ id: "oma", root: path.join(root, "oma-reg"), visibility: "public" as const }],
+		});
+		expect(report.ok).toBe(false);
+		expect(report.steps.find(s => s.id === "registries-manifest")?.status).toBe("conflict");
+		// The existing manifest is left byte-for-byte intact.
+		expect(await fs.readFile(manifestPath, "utf8")).toBe(existing);
+	});
+
+	it("scaffolds per-registry symlinks, entities/sections, and a .smart-env gitignore", async () => {
+		const manifestPath = path.join(root, "registries.json");
+		const omaRoot = path.join(root, "oma-reg");
+		const secretRoot = path.join(root, "secret-reg");
+		const report = await runEntitySetup({
+			homeDir: home,
+			agentDir,
+			registrySource: omaRoot,
+			manifestPath,
+			registries: [
+				{ id: "oma", root: omaRoot, visibility: "public" as const },
+				{ id: "secret", root: secretRoot, visibility: "private" as const },
+			],
+		});
+		expect(report.ok).toBe(true);
+
+		for (const [id, regRoot] of [
+			["oma", omaRoot],
+			["secret", secretRoot],
+		] as const) {
+			const link = path.join(home, `${id}-registry`);
+			expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
+			expect(path.resolve(await fs.readlink(link))).toBe(path.resolve(regRoot));
+			expect((await fs.stat(path.join(regRoot, "entities"))).isDirectory()).toBe(true);
+			for (const section of [...VAULT_SECTION_DIRS, "reference"]) {
+				expect((await fs.stat(path.join(regRoot, section))).isDirectory()).toBe(true);
+			}
+			expect(await fs.readFile(path.join(regRoot, ".gitignore"), "utf8")).toContain(".smart-env/");
+		}
+	});
+
+	it("migrates a legacy ~/vault into ~/oma-registry idempotently", async () => {
+		const manifestPath = path.join(root, "registries.json");
+		const registryRoot = path.join(root, "reg");
+		const legacyVault = path.join(root, "legacy-vault");
+		await fs.mkdir(legacyVault, { recursive: true });
+		await fs.symlink(legacyVault, path.join(home, "vault"));
+		const opts = { homeDir: home, agentDir, manifestPath, registryRoot, vaultLocation: legacyVault };
+
+		const first = await runEntitySetup(opts);
+		expect(first.steps.find(s => s.id === "legacy-vault-migration")?.status).toBe("created");
+		expect(first.registries.find(r => r.id === "oma")?.root).toBe(path.resolve(legacyVault));
+		const omaLink = path.join(home, "oma-registry");
+		expect(path.resolve(await fs.readlink(omaLink))).toBe(path.resolve(legacyVault));
+
+		const second = await runEntitySetup(opts);
+		expect(second.steps.find(s => s.id === "legacy-vault-migration")?.status).toBe("exists");
+		expect(path.resolve(await fs.readlink(omaLink))).toBe(path.resolve(legacyVault));
+		expect(second.steps.filter(s => s.status === "created" || s.status === "updated")).toEqual([]);
+	});
+
+	it("rewrites supplied @~/vault/ project-pointer stubs to @~/oma-registry/", async () => {
+		const stub = path.join(root, "phi.project.md");
+		await fs.writeFile(stub, "see @~/vault/projects/phi.md plus @~/vault/reference/x", "utf8");
+
+		const results = await rewriteVaultPointerStubs([stub, path.join(root, "missing.md")]);
+		expect(results[0]).toMatchObject({ changed: true, replacements: 2 });
+		expect(results[1]).toMatchObject({ changed: false, replacements: 0 });
+		expect(await fs.readFile(stub, "utf8")).toBe(
+			"see @~/oma-registry/projects/phi.md plus @~/oma-registry/reference/x",
+		);
+	});
+
+	it("rewrites vault stubs through setup when rewriteVaultStubs is set", async () => {
+		const stub = path.join(root, "proj.md");
+		await fs.writeFile(stub, "@~/vault/projects/x", "utf8");
+		const report = await runEntitySetup({
+			homeDir: home,
+			agentDir,
+			registrySource,
+			manifestPath: path.join(root, "registries.json"),
+			rewriteVaultStubs: true,
+			vaultStubPaths: [stub],
+		});
+		expect(report.steps.find(s => s.id === `stub-rewrite:${stub}`)?.status).toBe("updated");
+		expect(await fs.readFile(stub, "utf8")).toBe("@~/oma-registry/projects/x");
 	});
 });

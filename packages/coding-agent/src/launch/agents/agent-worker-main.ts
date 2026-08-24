@@ -95,7 +95,7 @@ export async function buildEntityMcpManager(
 ): Promise<MCPManager | undefined> {
 	let servers: Record<string, MCPServerConfig>;
 	try {
-		servers = buildEntityMcpServers(config);
+		servers = await buildEntityMcpServers(config);
 	} catch (error) {
 		logger.warn("entity MCP wiring failed", { error: error instanceof Error ? error.message : String(error) });
 		return undefined;

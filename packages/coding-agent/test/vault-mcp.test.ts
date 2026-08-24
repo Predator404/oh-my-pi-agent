@@ -428,3 +428,101 @@ describe("link resolution prefers exact/same-folder, unresolved on ambiguity (P3
 		expect(graph.linksOut("outside.md")[0].resolved).toBeUndefined();
 	});
 });
+
+// --- Multi-registry access set (ADR 0004 directional reads) -----------------
+describe("multi-registry access set (ADR 0004 directional reads)", () => {
+	let otherRoot: string;
+	const GUIDE = `## Guide\nSemantic search across the reference.\nLocal only.\n`;
+
+	function otherAjson(): string {
+		const vec = (v: number[]) => ({ embeddings: { [MODEL_KEY]: { vec: v } } });
+		const entries: Record<string, unknown> = {
+			"smart_sources:reference/guide.md": { ...vec([0, 0, 1, 0]), blocks: { "#Guide": { lines: [1, 3] } } },
+			"smart_blocks:reference/guide.md#Guide": vec([0, 0, 1, 0]),
+		};
+		return Object.entries(entries)
+			.map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`)
+			.join(",\n");
+	}
+
+	beforeAll(() => {
+		otherRoot = fs.mkdtempSync(path.join(os.tmpdir(), "omp-vault-other-"));
+		fs.mkdirSync(path.join(otherRoot, "reference"), { recursive: true });
+		fs.writeFileSync(path.join(otherRoot, "reference/guide.md"), GUIDE);
+		const envDir = path.join(otherRoot, ".smart-env");
+		fs.mkdirSync(path.join(envDir, "multi"), { recursive: true });
+		fs.writeFileSync(
+			path.join(envDir, "smart_env.json"),
+			JSON.stringify({ smart_sources: { embed_model: { transformers: { model_key: MODEL_KEY } } } }),
+		);
+		fs.writeFileSync(path.join(envDir, "multi", "all.ajson"), otherAjson());
+	});
+
+	afterAll(() => fs.rmSync(otherRoot, { recursive: true, force: true }));
+
+	// Home = "phi" (agents/phi), granted read-only registry "capitec" = otherRoot.
+	function accessBridge(): VaultBridge {
+		return new VaultBridge({
+			vaultRoot,
+			section: "agents/phi",
+			embedder: new FakeEmbedder(),
+			homeId: "phi",
+			readable: [{ id: "capitec", root: otherRoot }],
+		});
+	}
+
+	it("enumerates the visible registry ids, home first", () => {
+		expect(accessBridge().registryIds()).toEqual(["phi", "capitec"]);
+	});
+
+	it("(a) reads a granted registry and returns hits from that root", async () => {
+		const hits = await accessBridge().searchNotes("semantic search", { registry: "capitec" });
+		expect(hits.length).toBeGreaterThan(0);
+		expect(hits[0].file).toBe("reference/guide.md");
+		expect(hits[0].text).toContain("Semantic search");
+	});
+
+	it("(a) get_note reads a note from the granted registry root", () => {
+		const note = accessBridge().getNote("reference/guide.md", "capitec");
+		expect(note.path).toBe("reference/guide.md");
+		expect(note.content).toContain("Local only");
+	});
+
+	it("(b) rejects a read against an ungranted/unknown registry id", async () => {
+		const b = accessBridge();
+		await expect(b.searchNotes("search", { registry: "unknown" })).rejects.toThrow(/not accessible/);
+		expect(() => b.getNote("reference/guide.md", "unknown")).toThrow(/not accessible/);
+		expect(() => b.getConnections("reference/guide.md", "unknown")).toThrow(/not accessible/);
+	});
+
+	it("(c) write_note lands in home even when a registry arg is supplied", async () => {
+		const b = accessBridge();
+		try {
+			// write_note carries no registry param; a stray dispatch arg is ignored.
+			const res = (await handleToolCall(b, "write_note", {
+				path: "notes/pin.md",
+				content: "# pin",
+				registry: "capitec",
+			})) as { path: string };
+			expect(res.path).toBe("agents/phi/notes/pin.md");
+			expect(fs.existsSync(path.join(vaultRoot, "agents/phi/notes/pin.md"))).toBe(true);
+			// The read-only registry root is never written to.
+			expect(fs.existsSync(path.join(otherRoot, "agents/phi/notes/pin.md"))).toBe(false);
+			expect(fs.existsSync(path.join(otherRoot, "notes/pin.md"))).toBe(false);
+		} finally {
+			fs.rmSync(path.join(vaultRoot, "agents/phi/notes"), { recursive: true, force: true });
+		}
+	});
+
+	it("(d) default search_notes stays home-only (no union across roots)", async () => {
+		const hits = await accessBridge().searchNotes("semantic search");
+		expect(hits.length).toBeGreaterThan(0);
+		for (const h of hits) expect(h.file.startsWith("reference/")).toBe(false);
+	});
+
+	it("(e) the path-jail rejects `..`/outside-root paths on the granted root too", () => {
+		const b = accessBridge();
+		expect(() => b.getNote("../../../etc/passwd", "capitec")).toThrow(/escapes vault root/);
+		expect(() => b.getConnections("../outside.md", "capitec")).toThrow(/escapes vault root/);
+	});
+});

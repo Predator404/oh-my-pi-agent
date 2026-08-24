@@ -16,12 +16,22 @@ export interface VaultMcpServerEntry {
 	env?: Record<string, string>;
 }
 
+/** A read-only registry root the vault server may read (emitted as `--read id=root`). */
+export interface VaultReadableRoot {
+	id: string;
+	root: string;
+}
+
 /** Inputs for {@link vaultMcpServerConfig}. */
 export interface VaultMcpServerConfigOptions {
-	/** Vault root the server operates on (absolute); omit to use OMP_VAULT_PATH/~/vault. */
+	/** Home (writable) vault root (absolute); omit to use OMP_VAULT_PATH/~/vault. */
 	vaultRoot?: string;
 	/** Owning section (a C1 record's vaultSection), the default search/write scope. */
 	section?: string;
+	/** Home registry id (ADR 0004); emitted as `--home-id`. */
+	homeId?: string;
+	/** Read-only registry roots granted to this entity; each emitted as `--read id=root`. */
+	readableRoots?: readonly VaultReadableRoot[];
 	/**
 	 * Dev-checkout fallback: absolute path to the server entry module. When set,
 	 * the entry launches `bun run <serverModule>` instead of the linked
@@ -47,6 +57,8 @@ export function vaultMcpServerConfig(options: VaultMcpServerConfigOptions = {}):
 	const flags: string[] = [];
 	if (options.vaultRoot) flags.push("--vault", options.vaultRoot);
 	if (options.section) flags.push("--section", options.section);
+	if (options.homeId) flags.push("--home-id", options.homeId);
+	for (const readable of options.readableRoots ?? []) flags.push("--read", `${readable.id}=${readable.root}`);
 	if (options.serverModule) {
 		return { command: options.command ?? "bun", args: ["run", options.serverModule, ...flags] };
 	}
