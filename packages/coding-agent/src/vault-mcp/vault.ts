@@ -1,17 +1,20 @@
 /**
  * VaultBridge — the C3 vault operations behind the MCP server (SPEC §7, §12.4).
  *
- * One bridge is bound to one vault root and (optionally) one owning section
- * (a C1 record's `vaultSection`, e.g. `agents/phi`). It exposes the four C3
- * primitives:
+ * A bridge holds an ACCESS SET: one writable HOME registry root (+ its owning
+ * section, a C1 record's `vaultSection`, e.g. `agents/phi`) and zero or more
+ * READ-ONLY registry roots, each tagged by registry id (ADR 0004). It exposes
+ * the four C3 primitives:
  *   - {@link searchNotes}     hybrid semantic search → block-level hits, scoped.
  *   - {@link getNote}         read a note's markdown.
- *   - {@link writeNote}       plain-file write into the correct section.
+ *   - {@link writeNote}       plain-file write into the correct section (home).
  *   - {@link getConnections}  wikilink/backlink traversal (+ vector neighbors).
  *
- * All filesystem access is confined to the vault root (no `..` escape, no
- * symlink break-out). Nothing here contacts the network: semantic ranking reads
- * Smart Connections' local store and embeds the query with an on-device model.
+ * Reads target the home root by default; a `registry` id selects a read-only
+ * root. Writes ALWAYS target home. Each root is confined by the same path-jail
+ * (no `..` escape, no symlink break-out) and has its own Smart Connections
+ * store, loaded lazily. Nothing here contacts the network: semantic ranking
+ * reads the local store and embeds the query with an on-device model.
  */
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -47,14 +50,26 @@ export interface Connections {
 	relatedByVector: { file: string; score: number }[];
 }
 
+/** A read-only registry root the bridge may read (never write). */
+export interface ReadonlyRoot {
+	/** Registry id selecting this root in read calls. */
+	id: string;
+	/** Absolute registry root. */
+	root: string;
+}
+
 /** Options controlling {@link VaultBridge} construction. */
 export interface VaultBridgeOptions {
-	/** Absolute vault root. */
+	/** Absolute vault root of the writable HOME registry. */
 	vaultRoot: string;
-	/** Owning section (vault-relative), default scope for search/write. */
+	/** Owning section (vault-relative), default scope for search/write on home. */
 	section?: string;
 	/** Injected embedder; defaults to on-device {@link TransformersEmbedder}. */
 	embedder?: Embedder;
+	/** Home registry id (default `oma`); the id read calls default to. */
+	homeId?: string;
+	/** Read-only registry roots (each tagged by id) the bridge may read. */
+	readable?: readonly ReadonlyRoot[];
 }
 
 const MAX_HIT_CHARS = 2000;
@@ -95,55 +110,113 @@ function canonicalRoot(root: string): string {
 	}
 }
 
-export class VaultBridge {
-	readonly vaultRoot: string;
+const DEFAULT_HOME_REGISTRY_ID = "oma";
+
+/** One root in the bridge's access set: the writable home or a read-only registry. */
+interface RootAccess {
+	readonly id: string;
+	/** Canonical (symlink-resolved) absolute root. */
+	readonly root: string;
+	readonly writable: boolean;
+	/** Owning section (home only); read calls default their scope to it. */
 	readonly section?: string;
-	private readonly injectedEmbedder?: Embedder;
-	private defaultEmbedder: Embedder | null = null;
-	private storeCache: SmartConnectionsStore | null = null;
-	private graphCache: VaultGraph | null = null;
+	/** Lazily-loaded Smart Connections store for this root. */
+	store: SmartConnectionsStore | null;
+	/** Lazily-built link graph for this root. */
+	graph: VaultGraph | null;
+}
+
+export class VaultBridge {
+	/** Home (writable) registry root — back-compat accessor. */
+	readonly vaultRoot: string;
+	/** Home owning section — back-compat accessor. */
+	readonly section?: string;
+	/** Home registry id. */
+	readonly homeId: string;
+	readonly #injectedEmbedder?: Embedder;
+	#defaultEmbedder: Embedder | null = null;
+	readonly #home: RootAccess;
+	/** id → root: home first, then read-only roots in declared order. */
+	readonly #roots: Map<string, RootAccess>;
 
 	constructor(options: VaultBridgeOptions) {
-		this.vaultRoot = canonicalRoot(options.vaultRoot);
-		this.section = normalizeSection(options.section);
-		this.injectedEmbedder = options.embedder;
+		const section = normalizeSection(options.section);
+		this.homeId = options.homeId ?? DEFAULT_HOME_REGISTRY_ID;
+		this.section = section;
+		this.#injectedEmbedder = options.embedder;
+		this.#home = {
+			id: this.homeId,
+			root: canonicalRoot(options.vaultRoot),
+			writable: true,
+			section,
+			store: null,
+			graph: null,
+		};
+		this.vaultRoot = this.#home.root;
+		this.#roots = new Map([[this.#home.id, this.#home]]);
+		for (const readable of options.readable ?? []) {
+			if (this.#roots.has(readable.id)) continue;
+			this.#roots.set(readable.id, {
+				id: readable.id,
+				root: canonicalRoot(readable.root),
+				writable: false,
+				store: null,
+				graph: null,
+			});
+		}
+	}
+
+	/** Ids in the access set, home first (for discoverability). */
+	registryIds(): string[] {
+		return Array.from(this.#roots.keys());
+	}
+
+	/** Select the root a read targets; throws if the id is not in the access set. */
+	#access(registry?: string): RootAccess {
+		if (!registry || registry === this.homeId) return this.#home;
+		const entry = this.#roots.get(registry);
+		if (!entry) throw new Error(`Registry not accessible: ${registry}`);
+		return entry;
 	}
 
 	/**
-	 * Confine a caller-supplied path to the vault. Relative paths that do not
-	 * already name a top-level vault subtree are rooted at the bridge's section
-	 * (so an entity's writes/reads default to its own area). Throws on escape.
+	 * Confine a caller-supplied path to one root. Relative paths that do not
+	 * already name a top-level vault subtree are rooted at the root's owning
+	 * section (home only, when `rootInSection`). Throws on escape.
 	 */
-	resolveInVault(relOrAbs: string, opts?: { rootInSection?: boolean }): { abs: string; rel: string } {
+	#resolveIn(access: RootAccess, relOrAbs: string, opts?: { rootInSection?: boolean }): { abs: string; rel: string } {
 		const cleaned = relOrAbs.trim();
 		if (cleaned.length === 0) throw new Error("Empty note path");
+		const root = access.root;
 		let candidate: string;
 		if (path.isAbsolute(cleaned)) {
 			candidate = path.resolve(cleaned);
 		} else {
 			const firstSeg = cleaned.split(/[/\\]/, 1)[0];
-			const sectionRoot = this.section?.split("/", 1)[0];
+			const sectionRoot = access.section?.split("/", 1)[0];
 			const namesSection =
 				KNOWN_SECTION_ROOTS.includes(firstSeg) || (sectionRoot !== undefined && firstSeg === sectionRoot);
-			const base =
-				opts?.rootInSection && this.section && !namesSection
-					? path.join(this.vaultRoot, this.section)
-					: this.vaultRoot;
+			const base = opts?.rootInSection && access.section && !namesSection ? path.join(root, access.section) : root;
 			candidate = path.resolve(base, cleaned);
 		}
-		const rootWithSep = this.vaultRoot.endsWith(path.sep) ? this.vaultRoot : this.vaultRoot + path.sep;
-		const real = this.realExistingPrefix(candidate);
-		if (real !== this.vaultRoot && !real.startsWith(rootWithSep)) {
+		const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
+		const real = this.#realExistingPrefix(candidate);
+		if (real !== root && !real.startsWith(rootWithSep)) {
 			throw new Error(`Path escapes vault root: ${relOrAbs}`);
 		}
-		if (candidate !== this.vaultRoot && !candidate.startsWith(rootWithSep)) {
+		if (candidate !== root && !candidate.startsWith(rootWithSep)) {
 			throw new Error(`Path escapes vault root: ${relOrAbs}`);
 		}
-		return { abs: candidate, rel: path.relative(this.vaultRoot, candidate) };
+		return { abs: candidate, rel: path.relative(root, candidate) };
+	}
+
+	/** Confine a caller-supplied path to the HOME vault root (back-compat surface). */
+	resolveInVault(relOrAbs: string, opts?: { rootInSection?: boolean }): { abs: string; rel: string } {
+		return this.#resolveIn(this.#home, relOrAbs, opts);
 	}
 
 	/** realpath of the deepest existing ancestor (defends against symlink escape). */
-	private realExistingPrefix(candidate: string): string {
+	#realExistingPrefix(candidate: string): string {
 		let cur = candidate;
 		while (true) {
 			try {
@@ -156,20 +229,20 @@ export class VaultBridge {
 		}
 	}
 
-	private store(): SmartConnectionsStore {
-		if (!this.storeCache) this.storeCache = loadSmartConnectionsStore(this.vaultRoot);
-		return this.storeCache;
+	#store(access: RootAccess): SmartConnectionsStore {
+		if (!access.store) access.store = loadSmartConnectionsStore(access.root);
+		return access.store;
 	}
 
-	private graph(): VaultGraph {
-		if (!this.graphCache) this.graphCache = new VaultGraph(this.vaultRoot).build();
-		return this.graphCache;
+	#graph(access: RootAccess): VaultGraph {
+		if (!access.graph) access.graph = new VaultGraph(access.root).build();
+		return access.graph;
 	}
 
-	/** Force a reload of the embedding store + link graph (after external writes). */
+	/** Force a reload of the home embedding store + link graph (after writes). */
 	invalidate(): void {
-		this.storeCache = null;
-		this.graphCache = null;
+		this.#home.store = null;
+		this.#home.graph = null;
 	}
 
 	/**
@@ -179,23 +252,23 @@ export class VaultBridge {
 	 * MUST match the store model (hard error otherwise); the default embedder is
 	 * built lazily from the store's recorded model key.
 	 */
-	private embedderFor(store: SmartConnectionsStore): Embedder {
+	#embedderFor(store: SmartConnectionsStore): Embedder {
 		const storeModel = store.model.modelKey;
-		if (this.injectedEmbedder) {
-			if (this.injectedEmbedder.modelKey !== storeModel) {
+		if (this.#injectedEmbedder) {
+			if (this.#injectedEmbedder.modelKey !== storeModel) {
 				throw new Error(
-					`Query embedder model '${this.injectedEmbedder.modelKey}' does not match the vault's stored embedding model '${storeModel}'; semantic rankings would be meaningless. Provide an embedder for '${storeModel}'.`,
+					`Query embedder model '${this.#injectedEmbedder.modelKey}' does not match the vault's stored embedding model '${storeModel}'; semantic rankings would be meaningless. Provide an embedder for '${storeModel}'.`,
 				);
 			}
-			return this.injectedEmbedder;
+			return this.#injectedEmbedder;
 		}
-		if (!this.defaultEmbedder || this.defaultEmbedder.modelKey !== storeModel) {
-			this.defaultEmbedder = new TransformersEmbedder(storeModel);
+		if (!this.#defaultEmbedder || this.#defaultEmbedder.modelKey !== storeModel) {
+			this.#defaultEmbedder = new TransformersEmbedder(storeModel);
 		}
-		return this.defaultEmbedder;
+		return this.#defaultEmbedder;
 	}
 
-	private inSection(filePath: string, section: string | undefined): boolean {
+	#inSection(filePath: string, section: string | undefined): boolean {
 		if (!section) return true;
 		return filePath === section || filePath.startsWith(`${section}/`);
 	}
@@ -203,34 +276,36 @@ export class VaultBridge {
 	/**
 	 * Hybrid semantic search. Embeds the query on-device, ranks Smart Connections'
 	 * stored block vectors by cosine similarity, and returns the top-k block-level
-	 * hits scoped to `section` (falling back to the bridge's owning section, then
-	 * the whole vault). Falls back to source-level entries only when no blocks
-	 * exist in scope.
+	 * hits scoped to `section` (falling back to the target root's owning section,
+	 * then the whole root). Reads the home root unless `registry` selects another
+	 * readable root (rejected if not in the access set). Falls back to
+	 * source-level entries only when no blocks exist in scope.
 	 */
-	async searchNotes(query: string, opts?: { section?: string; k?: number }): Promise<NoteHit[]> {
+	async searchNotes(query: string, opts?: { section?: string; k?: number; registry?: string }): Promise<NoteHit[]> {
 		const trimmed = query.trim();
 		if (trimmed.length === 0) throw new Error("search_notes requires a non-empty query");
 		const k = opts?.k && opts.k > 0 ? Math.floor(opts.k) : DEFAULT_TOP_K;
-		const scope = normalizeSection(opts?.section) ?? this.section;
-		const store = this.store();
-		const scoped = Array.from(store.entries.values()).filter(e => this.inSection(e.filePath, scope));
+		const access = this.#access(opts?.registry);
+		const scope = normalizeSection(opts?.section) ?? access.section;
+		const store = this.#store(access);
+		const scoped = Array.from(store.entries.values()).filter(e => this.#inSection(e.filePath, scope));
 		const blocks = scoped.filter(e => e.kind === "block");
 		const pool = blocks.length > 0 ? blocks : scoped;
 		if (pool.length === 0) return [];
-		const queryVec = await this.embedderFor(store).embed(trimmed);
+		const queryVec = await this.#embedderFor(store).embed(trimmed);
 		const ranked = pool
 			.map(entry => ({ entry, score: cosineSimilarity(queryVec, entry.vec) }))
 			.sort((a, b) => b.score - a.score)
 			.slice(0, k);
-		return ranked.map(({ entry, score }) => this.toHit(entry, score));
+		return ranked.map(({ entry, score }) => this.#toHit(access, entry, score));
 	}
 
-	private toHit(entry: EmbeddingEntry, score: number): NoteHit {
+	#toHit(access: RootAccess, entry: EmbeddingEntry, score: number): NoteHit {
 		const hit: NoteHit = {
 			key: entry.key,
 			file: entry.filePath,
 			score,
-			text: this.extractText(entry),
+			text: this.#extractText(access, entry),
 			granularity: entry.kind,
 		};
 		if (entry.subKey) hit.heading = entry.subKey.replace(/^#+/, "").replace(/#/g, " › ").trim();
@@ -239,10 +314,10 @@ export class VaultBridge {
 	}
 
 	/** Extract the text for a hit: block line-range if known, else heading section. */
-	private extractText(entry: EmbeddingEntry): string {
+	#extractText(access: RootAccess, entry: EmbeddingEntry): string {
 		let content: string;
 		try {
-			content = fs.readFileSync(path.join(this.vaultRoot, entry.filePath), "utf8");
+			content = fs.readFileSync(path.join(access.root, entry.filePath), "utf8");
 		} catch {
 			return "";
 		}
@@ -256,12 +331,12 @@ export class VaultBridge {
 				.trim();
 		}
 		if (entry.kind === "block" && entry.subKey)
-			return this.extractHeadingSection(lines, entry.subKey).slice(0, MAX_HIT_CHARS);
+			return this.#extractHeadingSection(lines, entry.subKey).slice(0, MAX_HIT_CHARS);
 		return content.slice(0, MAX_HIT_CHARS).trim();
 	}
 
 	/** Slice the section under the final heading of a `#a#b#c` breadcrumb. */
-	private extractHeadingSection(lines: string[], subKey: string): string {
+	#extractHeadingSection(lines: string[], subKey: string): string {
 		const parts = subKey.split("#").filter(p => p.length > 0);
 		const leaf = parts[parts.length - 1]?.trim().toLowerCase();
 		if (!leaf) return lines.join("\n").trim();
@@ -287,21 +362,24 @@ export class VaultBridge {
 	/**
 	 * Read a note's markdown content. Bare relative paths are rooted in the owning
 	 * section (symmetric with {@link writeNote}); a known section prefix or an
-	 * absolute path addresses the vault directly. Confined to the vault root.
+	 * absolute path addresses the root directly. Reads the home root unless
+	 * `registry` selects another readable root. Confined to the target root.
 	 */
-	getNote(notePath: string): { path: string; content: string } {
-		const { abs, rel } = this.resolveInVault(notePath, { rootInSection: true });
+	getNote(notePath: string, registry?: string): { path: string; content: string } {
+		const access = this.#access(registry);
+		const { abs, rel } = this.#resolveIn(access, notePath, { rootInSection: true });
 		const content = fs.readFileSync(abs, "utf8");
 		return { path: rel, content };
 	}
 
 	/**
-	 * Plain-file write of markdown into the vault. A relative path that does not
-	 * already name a top-level section is rooted at the bridge's owning section,
-	 * so an entity's writes land in its own area (SPEC §12.4 acceptance).
+	 * Plain-file write of markdown into the HOME vault (writes never target a
+	 * read-only registry). A relative path that does not already name a top-level
+	 * section is rooted at the home owning section, so an entity's writes land in
+	 * its own area (SPEC §12.4 acceptance).
 	 */
 	writeNote(notePath: string, content: string): { path: string; bytesWritten: number; created: boolean } {
-		const { abs, rel } = this.resolveInVault(notePath, { rootInSection: true });
+		const { abs, rel } = this.#resolveIn(this.#home, notePath, { rootInSection: true });
 		if (!rel.endsWith(".md")) throw new Error(`write_note only writes markdown (.md): ${rel}`);
 		const created = !fs.existsSync(abs);
 		fs.mkdirSync(path.dirname(abs), { recursive: true });
@@ -313,12 +391,14 @@ export class VaultBridge {
 	/**
 	 * Traverse the link graph from a note: forward wikilinks, backlinks, and the
 	 * note's nearest vector neighbors (the "embed → entry node → traverse" hybrid,
-	 * seeded from the note's own stored embedding — no query, no network).
+	 * seeded from the note's own stored embedding — no query, no network). Reads
+	 * the home root unless `registry` selects another readable root.
 	 */
-	getConnections(notePath: string): Connections {
-		const { abs, rel } = this.resolveInVault(notePath, { rootInSection: true });
+	getConnections(notePath: string, registry?: string): Connections {
+		const access = this.#access(registry);
+		const { abs, rel } = this.#resolveIn(access, notePath, { rootInSection: true });
 		if (!fs.existsSync(abs)) throw new Error(`Note not found: ${rel}`);
-		const graph = this.graph();
+		const graph = this.#graph(access);
 		return {
 			file: rel,
 			linksOut: graph
@@ -329,13 +409,17 @@ export class VaultBridge {
 						: { target: l.target, resolved: l.resolved },
 				),
 			linksIn: graph.linksIn(rel),
-			relatedByVector: this.vectorNeighbors(rel),
+			relatedByVector: this.#vectorNeighbors(access, rel),
 		};
 	}
 
 	/** Nearest OTHER notes by the entry note's stored source embedding. */
-	private vectorNeighbors(notePath: string, k: number = DEFAULT_RELATED): { file: string; score: number }[] {
-		const store = this.store();
+	#vectorNeighbors(
+		access: RootAccess,
+		notePath: string,
+		k: number = DEFAULT_RELATED,
+	): { file: string; score: number }[] {
+		const store = this.#store(access);
 		const seed = store.entries.get(notePath);
 		if (!seed) return [];
 		const scores = new Map<string, number>();

@@ -21,8 +21,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { MCPServerConfig } from "../mcp/types";
-import { vaultMcpServerConfig } from "../vault-mcp/register";
+import { type VaultMcpServerEntry, vaultMcpServerConfig } from "../vault-mcp/register";
 import { getEntityRegistryRoot } from "./loader";
+import { loadRegistryManifest, type RegistryAccess, type RegistryManifest, resolveRegistryAccess } from "./registries";
 import type { ResolvedEntityConfig } from "./schema";
 
 /** Default bin name for the WS3 bank-scoped memory MCP server. */
@@ -35,13 +36,17 @@ export const VAULT_PATH_ENV = "OMP_VAULT_PATH";
 export const ENTITY_MCP_SERVER_NAMES = { memory: "memory", vault: "vault" } as const;
 
 /** The C1 fields the wiring reads. */
-export type EntityMcpConfig = Pick<ResolvedEntityConfig, "memory" | "vaultSection">;
+export type EntityMcpConfig = Pick<ResolvedEntityConfig, "memory" | "vaultSection" | "registry">;
 
 export interface EntityMcpWiringOptions {
-	/** Entity-registry root (memory MCP `--registry`; also seeds `OMP_ENTITY_REGISTRY`). Default: {@link getEntityRegistryRoot}. */
+	/** Legacy fallback: memory MCP `--registry` root when the manifest can't resolve. Default: {@link getEntityRegistryRoot}. */
 	registryRoot?: string;
-	/** Vault root the vault MCP operates on (absolute). Default: {@link resolveVaultRoot}. */
+	/** Legacy fallback: single vault root when the manifest can't resolve. Default: {@link resolveVaultRoot}. */
 	vaultRoot?: string;
+	/** Preloaded registries manifest; skips {@link loadRegistryManifest}. */
+	manifest?: RegistryManifest;
+	/** Explicit registries manifest path (else env/default). Ignored when {@link manifest} is set. */
+	manifestPath?: string;
 	/**
 	 * Launch the servers via `bun run <module>` (source checkout) instead of the
 	 * linked `omp-memory-mcp` / `omp-vault-mcp` bins. Default: {@link isDevCheckout}.
@@ -79,32 +84,74 @@ function memoryServerConfig(bank: string, registryRoot: string, dev: boolean): M
 }
 
 /**
- * Build the per-entity `mcpServers` map (memory + vault) for a resolved entity
- * config. Defaults resolve the registry root and vault root from the wired
- * environment (the symlinks/env WS7a setup establishes), so the daemon worker
- * can call this with just the config.
+ * Resolve the entity's registry access set (ADR 0004): the writable home root
+ * followed by every readable root. Returns `undefined` when no manifest can be
+ * loaded or the home id is unknown, so callers fall back to legacy single-root
+ * wiring. A preloaded {@link EntityMcpWiringOptions.manifest} skips the load.
  */
-export function buildEntityMcpServers(
+async function resolveAccessSet(
+	homeId: string,
+	options: EntityMcpWiringOptions,
+): Promise<RegistryAccess[] | undefined> {
+	let manifest: RegistryManifest;
+	try {
+		manifest = options.manifest ?? (await loadRegistryManifest({ manifestPath: options.manifestPath }));
+	} catch {
+		return undefined;
+	}
+	try {
+		return resolveRegistryAccess(manifest, homeId);
+	} catch {
+		return undefined;
+	}
+}
+
+function toVaultServer(entry: VaultMcpServerEntry): MCPServerConfig {
+	return {
+		type: "stdio",
+		command: entry.command,
+		args: entry.args,
+		...(entry.env ? { env: entry.env } : {}),
+	};
+}
+
+/**
+ * Build the per-entity `mcpServers` map (memory + vault) for a resolved entity
+ * config. Resolves the registry manifest and, from the entity's home registry
+ * id, the vault access set: the writable home root (`--vault` + `--section`)
+ * plus every readable root (`--read id=root`), with memory records living in
+ * the home root. When the manifest can't resolve the home id, falls back to the
+ * legacy single-root wiring (`resolveVaultRoot` / `getEntityRegistryRoot`).
+ */
+export async function buildEntityMcpServers(
 	config: EntityMcpConfig,
 	options: EntityMcpWiringOptions = {},
-): Record<string, MCPServerConfig> {
+): Promise<Record<string, MCPServerConfig>> {
 	const dev = options.dev ?? isDevCheckout();
+	const serverModule = dev ? vaultServerModulePath() : undefined;
+	const access = await resolveAccessSet(config.registry, options);
+
+	if (access) {
+		const [home, ...readonlyRoots] = access;
+		const vault = vaultMcpServerConfig({
+			vaultRoot: home.root,
+			section: config.vaultSection,
+			homeId: config.registry,
+			readableRoots: readonlyRoots.map(r => ({ id: r.id, root: r.root })),
+			serverModule,
+		});
+		return {
+			[ENTITY_MCP_SERVER_NAMES.memory]: memoryServerConfig(config.memory.bank, home.root, dev),
+			[ENTITY_MCP_SERVER_NAMES.vault]: toVaultServer(vault),
+		};
+	}
+
+	// Legacy fallback: single vault root + separate entity-registry root.
 	const registryRoot = options.registryRoot ?? getEntityRegistryRoot();
 	const vaultRoot = options.vaultRoot ?? resolveVaultRoot();
-
-	const vault = vaultMcpServerConfig({
-		vaultRoot,
-		section: config.vaultSection,
-		serverModule: dev ? vaultServerModulePath() : undefined,
-	});
-
+	const vault = vaultMcpServerConfig({ vaultRoot, section: config.vaultSection, serverModule });
 	return {
 		[ENTITY_MCP_SERVER_NAMES.memory]: memoryServerConfig(config.memory.bank, registryRoot, dev),
-		[ENTITY_MCP_SERVER_NAMES.vault]: {
-			type: "stdio",
-			command: vault.command,
-			args: vault.args,
-			...(vault.env ? { env: vault.env } : {}),
-		},
+		[ENTITY_MCP_SERVER_NAMES.vault]: toVaultServer(vault),
 	};
 }
