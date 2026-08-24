@@ -182,7 +182,15 @@ function makeHarness() {
 		},
 		runSetup: async opts => {
 			record("runSetup", opts);
-			return { registryRoot: "/r", vaultLocation: "/r/vault", vaultLink: "/h/vault", steps: [], ok: true };
+			return {
+				registryRoot: "/r",
+				vaultLocation: "/r/vault",
+				vaultLink: "/h/vault",
+				steps: [],
+				ok: true,
+				manifestPath: "/a/registries.json",
+				registries: [{ id: "oma", root: "/r", visibility: "public" }],
+			};
 		},
 		readStdin: async () => {
 			record("readStdin");
@@ -369,6 +377,16 @@ describe("runEntityCommand — registry/config surface", () => {
 			model: ["anthropic/opus"],
 			tools: ["read", "grep"],
 		});
+	});
+
+	it("--registry routes a create into the target registry", async () => {
+		const h = makeHarness();
+		await run(
+			cmd("create", ["sage"], { role: "persona", description: "d", prompt: "p", registry: "secret" }),
+			h.deps,
+		);
+		const call = h.calls.find(c => c.method === "createRecord")!;
+		expect(call.args[2]).toMatchObject({ registry: "secret" });
 	});
 
 	it("create rejects a bad role / missing description", async () => {

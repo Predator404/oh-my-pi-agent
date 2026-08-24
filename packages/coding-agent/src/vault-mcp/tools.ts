@@ -35,6 +35,10 @@ export const SEARCH_NOTES_SCHEMA = {
 				"Vault subtree to scope results to (e.g. 'agents/phi'). Defaults to the entity's owning section, then the whole vault.",
 		},
 		k: { type: "integer", description: "Max number of block-level hits to return.", default: 5 },
+		registry: {
+			type: "string",
+			description: "Registry id to read from; defaults to the entity's home registry.",
+		},
 	},
 	required: ["query"],
 } as const;
@@ -43,6 +47,7 @@ export const GET_NOTE_SCHEMA = {
 	type: "object",
 	properties: {
 		path: { type: "string", description: "Vault-relative (or in-vault absolute) path to a markdown note." },
+		registry: { type: "string", description: "Registry id to read from; defaults to home." },
 	},
 	required: ["path"],
 } as const;
@@ -64,6 +69,7 @@ export const GET_CONNECTIONS_SCHEMA = {
 	type: "object",
 	properties: {
 		path: { type: "string", description: "Vault-relative path of the entry note to traverse links from." },
+		registry: { type: "string", description: "Registry id to read from; defaults to home." },
 	},
 	required: ["path"],
 } as const;
@@ -113,16 +119,17 @@ export async function handleToolCall(bridge: VaultBridge, name: string, args: To
 		case "search_notes": {
 			const query = requireString(args, "query");
 			const section = optionalString(args, "section");
+			const registry = optionalString(args, "registry");
 			const k = typeof args.k === "number" ? args.k : undefined;
-			const hits = await bridge.searchNotes(query, { section, k });
+			const hits = await bridge.searchNotes(query, { section, k, registry });
 			return { section: section ?? bridge.section ?? null, count: hits.length, hits };
 		}
 		case "get_note":
-			return bridge.getNote(requireString(args, "path"));
+			return bridge.getNote(requireString(args, "path"), optionalString(args, "registry"));
 		case "write_note":
 			return bridge.writeNote(requireString(args, "path"), typeof args.content === "string" ? args.content : "");
 		case "get_connections": {
-			const conn = bridge.getConnections(requireString(args, "path"));
+			const conn = bridge.getConnections(requireString(args, "path"), optionalString(args, "registry"));
 			return {
 				file: conn.file,
 				linksOut: conn.linksOut,

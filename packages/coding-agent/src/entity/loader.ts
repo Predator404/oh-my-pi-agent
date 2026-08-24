@@ -21,6 +21,12 @@ import type { AgentSource } from "../task/types";
 import { parseConfiguredThinkingLevel } from "../thinking";
 import { normalizeToolNames } from "../tools/builtin-names";
 import {
+	DEFAULT_REGISTRY_ID,
+	loadRegistryManifest,
+	type RegistryManifest,
+	type RegistryVisibility,
+} from "./registries";
+import {
 	ENTITY_MEMORY_BACKENDS,
 	type EntityHosting,
 	type EntityMemory,
@@ -70,8 +76,12 @@ export class EntityNotFoundError extends Error {
 
 /** Options shared by the registry entry points. */
 export interface EntityRegistryOptions {
-	/** Explicit registry root; overrides the env var and the default location. */
+	/** Explicit registry root; overrides the manifest and scans just that one root (legacy single-registry). */
 	registryRoot?: string;
+	/** Preloaded registries manifest; else loaded from the manifest path/env/default (ADR 0004). */
+	manifest?: RegistryManifest;
+	/** Explicit manifest path (used only when `manifest` is not supplied and no `registryRoot`). */
+	manifestPath?: string;
 }
 
 /**
@@ -88,6 +98,53 @@ export function getEntityRegistryRoot(options: EntityRegistryOptions = {}): stri
 		return path.resolve(env.trim());
 	}
 	return path.join(getAgentDir(), "registry");
+}
+
+/** A registry to scan for records: id + root + visibility (drives bank-namespace policy). */
+interface ScanRegistry {
+	id: string;
+	root: string;
+	visibility: RegistryVisibility;
+}
+
+/**
+ * The registries to scan for entity records. An explicit `registryRoot` scans
+ * just that one root (legacy single-registry, id {@link DEFAULT_REGISTRY_ID});
+ * otherwise every registry in the manifest (ADR 0004).
+ */
+async function registriesToScan(options: EntityRegistryOptions): Promise<ScanRegistry[]> {
+	if (options.registryRoot?.trim()) {
+		return [{ id: DEFAULT_REGISTRY_ID, root: path.resolve(options.registryRoot.trim()), visibility: "public" }];
+	}
+	const manifest = options.manifest ?? (await loadRegistryManifest({ manifestPath: options.manifestPath }));
+	return [...manifest.registries.values()].map(entry => ({
+		id: entry.id,
+		root: entry.root,
+		visibility: entry.visibility,
+	}));
+}
+
+/**
+ * Enforce the bank-namespace policy (ADR 0004 Q6): an entity homed in a
+ * `private` registry MUST namespace its `memory.bank` as `<registryId>/<bank>`,
+ * so the shared (repo-external) bank store is self-partitioning and one private
+ * domain can never bind another's bank by name. `public` registries are exempt,
+ * so legacy bare names (e.g. `phi`) are preserved.
+ */
+export function enforceBankNamespace(
+	bank: string,
+	registryId: string,
+	visibility: RegistryVisibility,
+	filePath: string,
+): void {
+	if (visibility !== "private") return;
+	const prefix = `${registryId}/`;
+	if (!bank.startsWith(prefix)) {
+		throw new EntityValidationError(
+			`private registry "${registryId}": memory.bank must be namespaced as "${prefix}<bank>" (got "${bank}")`,
+			filePath,
+		);
+	}
 }
 
 function requiredString(value: unknown, field: string, filePath: string): string {
@@ -237,6 +294,7 @@ export function parseEntityMeta(
 	frontmatter: Record<string, unknown>,
 	filePath: string,
 	source: AgentSource,
+	registryId: string = DEFAULT_REGISTRY_ID,
 ): EntityRecordMeta {
 	const name = requiredString(frontmatter.name, "name", filePath);
 	if (!ENTITY_NAME_PATTERN.test(name)) {
@@ -249,6 +307,16 @@ export function parseEntityMeta(
 	const role = parseRole(frontmatter.role, filePath);
 	const memory = parseMemory(frontmatter.memory, role, filePath);
 	const vaultSection = requiredString(frontmatter.vaultSection, "vaultSection", filePath);
+	if (
+		typeof frontmatter.registry === "string" &&
+		frontmatter.registry.trim() &&
+		frontmatter.registry.trim() !== registryId
+	) {
+		throw new EntityValidationError(
+			`declared registry "${frontmatter.registry.trim()}" does not match this record's registry "${registryId}"`,
+			filePath,
+		);
+	}
 
 	let tools = parseArrayOrCSV(frontmatter.tools);
 	if (tools) tools = normalizeToolNames(tools);
@@ -276,6 +344,7 @@ export function parseEntityMeta(
 		autoloadSkills,
 		memory,
 		vaultSection,
+		registry: registryId,
 		watchdog: parseWatchdog(frontmatter.watchdog, filePath),
 		hosting: parseHosting(frontmatter.hosting, filePath),
 		source,
@@ -288,9 +357,14 @@ export function parseEntityMeta(
  * record content. Throws {@link EntityValidationError} on malformed frontmatter
  * or any schema/policy violation.
  */
-export function parseEntityRecord(filePath: string, content: string, source: AgentSource): EntityRecord {
+export function parseEntityRecord(
+	filePath: string,
+	content: string,
+	source: AgentSource,
+	registryId: string = DEFAULT_REGISTRY_ID,
+): EntityRecord {
 	const { frontmatter, body } = parseFrontmatter(content, { location: filePath, level: "fatal" });
-	const meta = parseEntityMeta(frontmatter, filePath, source);
+	const meta = parseEntityMeta(frontmatter, filePath, source, registryId);
 	const systemPrompt = body.trim();
 	if (!systemPrompt) {
 		throw new EntityValidationError(`Entity record has an empty system prompt body`, filePath);
@@ -307,22 +381,27 @@ export async function loadEntityRecord(name: string, options: EntityRegistryOpti
 	if (!ENTITY_NAME_PATTERN.test(name)) {
 		throw new EntityValidationError(`Illegal entity name "${name}" — must match ${ENTITY_NAME_PATTERN}`);
 	}
-	const root = getEntityRegistryRoot(options);
-	const filePath = path.join(root, ENTITY_RECORDS_SUBDIR, `${name}.md`);
-	let content: string;
-	try {
-		content = await fs.readFile(filePath, "utf-8");
-	} catch {
-		throw new EntityNotFoundError(name, filePath);
+	const scan = await registriesToScan(options);
+	for (const registry of scan) {
+		const filePath = path.join(registry.root, ENTITY_RECORDS_SUBDIR, `${name}.md`);
+		let content: string;
+		try {
+			content = await fs.readFile(filePath, "utf-8");
+		} catch {
+			continue;
+		}
+		const record = parseEntityRecord(filePath, content, "user", registry.id);
+		if (record.name !== name) {
+			throw new EntityValidationError(
+				`Entity record name "${record.name}" does not match its filename "${name}.md"`,
+				filePath,
+			);
+		}
+		enforceBankNamespace(record.memory.bank, registry.id, registry.visibility, filePath);
+		return record;
 	}
-	const record = parseEntityRecord(filePath, content, "user");
-	if (record.name !== name) {
-		throw new EntityValidationError(
-			`Entity record name "${record.name}" does not match its filename "${name}.md"`,
-			filePath,
-		);
-	}
-	return record;
+	const attempted = path.join(scan[0]?.root ?? "", ENTITY_RECORDS_SUBDIR, `${name}.md`);
+	throw new EntityNotFoundError(name, attempted);
 }
 
 /** One malformed record surfaced by {@link discoverEntities} (roster survives it). */
@@ -345,41 +424,44 @@ export interface EntityDiscoveryResult {
  * the rest.
  */
 export async function discoverEntities(options: EntityRegistryOptions = {}): Promise<EntityDiscoveryResult> {
-	const root = getEntityRegistryRoot(options);
-	const dir = path.join(root, ENTITY_RECORDS_SUBDIR);
-	const dirents = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
-	const files = dirents
-		.filter(entry => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".md"))
-		.map(entry => entry.name)
-		.sort((a, b) => a.localeCompare(b));
-
+	const scan = await registriesToScan(options);
 	const entities: EntityRecordMeta[] = [];
 	const errors: EntityLoadError[] = [];
 	const seen = new Set<string>();
 
-	for (const fileName of files) {
-		const filePath = path.join(dir, fileName);
-		const expectedName = fileName.slice(0, -3);
-		try {
-			const content = await fs.readFile(filePath, "utf-8");
-			// Frontmatter only — drop the body so no prompt is eagerly held.
-			const { frontmatter } = parseFrontmatter(content, { location: filePath, level: "fatal" });
-			const meta = parseEntityMeta(frontmatter, filePath, "user");
-			if (meta.name !== expectedName) {
-				throw new EntityValidationError(
-					`Entity record name "${meta.name}" does not match its filename "${expectedName}.md"`,
-					filePath,
-				);
+	for (const registry of scan) {
+		const dir = path.join(registry.root, ENTITY_RECORDS_SUBDIR);
+		const dirents = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+		const files = dirents
+			.filter(entry => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".md"))
+			.map(entry => entry.name)
+			.sort((a, b) => a.localeCompare(b));
+
+		for (const fileName of files) {
+			const filePath = path.join(dir, fileName);
+			const expectedName = fileName.slice(0, -3);
+			try {
+				const content = await fs.readFile(filePath, "utf-8");
+				// Frontmatter only — drop the body so no prompt is eagerly held.
+				const { frontmatter } = parseFrontmatter(content, { location: filePath, level: "fatal" });
+				const meta = parseEntityMeta(frontmatter, filePath, "user", registry.id);
+				if (meta.name !== expectedName) {
+					throw new EntityValidationError(
+						`Entity record name "${meta.name}" does not match its filename "${expectedName}.md"`,
+						filePath,
+					);
+				}
+				if (seen.has(meta.name)) {
+					throw new EntityValidationError(`Duplicate entity name "${meta.name}"`, filePath);
+				}
+				enforceBankNamespace(meta.memory.bank, registry.id, registry.visibility, filePath);
+				seen.add(meta.name);
+				entities.push(meta);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				logger.warn("Failed to load entity record", { filePath, error: message });
+				errors.push({ filePath, error: message });
 			}
-			if (seen.has(meta.name)) {
-				throw new EntityValidationError(`Duplicate entity name "${meta.name}"`, filePath);
-			}
-			seen.add(meta.name);
-			entities.push(meta);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			logger.warn("Failed to load entity record", { filePath, error: message });
-			errors.push({ filePath, error: message });
 		}
 	}
 
@@ -406,7 +488,11 @@ export async function resolveEntityConfig(
 	name: string,
 	options: ResolveEntityOptions = {},
 ): Promise<ResolvedEntityConfig> {
-	const record = await loadEntityRecord(name, { registryRoot: options.registryRoot });
+	const record = await loadEntityRecord(name, {
+		registryRoot: options.registryRoot,
+		manifest: options.manifest,
+		manifestPath: options.manifestPath,
+	});
 	return {
 		name: record.name,
 		description: record.description,
@@ -420,6 +506,7 @@ export async function resolveEntityConfig(
 		autoloadSkills: record.autoloadSkills,
 		memory: record.memory,
 		vaultSection: record.vaultSection,
+		registry: record.registry,
 		watchdog: record.watchdog,
 		hosting: record.hosting,
 		cwd: options.cwd,

@@ -328,7 +328,7 @@ export class Theme {
 	 */
 	getBubbleBgAnsi(color: ThemeColor): string {
 		const colorHex = this.#hexFgColors[color];
-		if (!colorHex || !colorHex.startsWith("#")) return this.getBgAnsi("customMessageBg");
+		if (!colorHex?.startsWith("#")) return this.getBgAnsi("customMessageBg");
 		const light = this.statusLineLuminance !== undefined && this.statusLineLuminance > 0.5;
 		const baseHex = this.#hexBgColors.customMessageBg || (light ? "#ffffff" : "#111111");
 		return bgAnsi(mixHex(baseHex, colorHex, 0.16), this.mode);

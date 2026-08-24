@@ -11,7 +11,7 @@
 import { TransformersEmbedder } from "./embedder";
 import { loadSmartConnectionsStore } from "./store";
 import { getToolDefinitions, handleToolCall, type ToolArguments, type ToolDefinition } from "./tools";
-import { resolveVaultRoot, VaultBridge } from "./vault";
+import { type ReadonlyRoot, resolveVaultRoot, VaultBridge } from "./vault";
 
 export interface JsonRpcRequest {
 	readonly jsonrpc?: string;
@@ -131,15 +131,28 @@ export async function runStdio(
 	}
 }
 
-/** CLI args → VaultBridge. `--vault <root>` and `--section <vaultSection>`. */
+/**
+ * CLI args → VaultBridge. `--vault <homeRoot>` (writable home) + `--section
+ * <vaultSection>`, optional `--home-id <id>`, and repeatable `--read <id>=<root>`
+ * for each read-only registry root. `--vault` alone behaves as before.
+ */
 export function bridgeFromArgv(argv: readonly string[]): VaultBridge {
 	let vault: string | undefined;
 	let section: string | undefined;
+	let homeId: string | undefined;
+	const readable: ReadonlyRoot[] = [];
 	for (let i = 0; i < argv.length; i++) {
-		if (argv[i] === "--vault") vault = argv[++i];
-		else if (argv[i] === "--section") section = argv[++i];
+		const arg = argv[i];
+		if (arg === "--vault") vault = argv[++i];
+		else if (arg === "--section") section = argv[++i];
+		else if (arg === "--home-id") homeId = argv[++i];
+		else if (arg === "--read") {
+			const spec = argv[++i];
+			const eq = spec ? spec.indexOf("=") : -1;
+			if (spec && eq > 0) readable.push({ id: spec.slice(0, eq), root: spec.slice(eq + 1) });
+		}
 	}
-	return new VaultBridge({ vaultRoot: resolveVaultRoot(vault), section });
+	return new VaultBridge({ vaultRoot: resolveVaultRoot(vault), section, homeId, readable });
 }
 
 /**
