@@ -901,6 +901,7 @@ export class AcpAgent implements Agent {
 	async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
 		this.#assertAbsoluteCwd(params.cwd);
 		const record = await this.#createNewSessionRecord(params.cwd, params.mcpServers);
+		await this.#ensureModelCatalogReady(record.session);
 		const response: NewSessionResponse = {
 			sessionId: record.protocolSessionId,
 			configOptions: this.#buildConfigOptions(record.session),
@@ -914,6 +915,7 @@ export class AcpAgent implements Agent {
 		this.#assertAbsoluteCwd(params.cwd);
 		const record = await this.#loadManagedSession(params.sessionId, params.cwd, params.mcpServers);
 		await this.#replaySessionHistory(record);
+		await this.#ensureModelCatalogReady(record.session);
 		const response: LoadSessionResponse = {
 			configOptions: this.#buildConfigOptions(record.session),
 			modes: this.#buildModeState(record.session),
@@ -942,6 +944,7 @@ export class AcpAgent implements Agent {
 	async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
 		this.#assertAbsoluteCwd(params.cwd);
 		const record = await this.#resumeManagedSession(params.sessionId, params.cwd, params.mcpServers ?? []);
+		await this.#ensureModelCatalogReady(record.session);
 		const response: ResumeSessionResponse = {
 			configOptions: this.#buildConfigOptions(record.session),
 			modes: this.#buildModeState(record.session),
@@ -953,6 +956,7 @@ export class AcpAgent implements Agent {
 	async unstable_forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
 		this.#assertAbsoluteCwd(params.cwd);
 		const record = await this.#forkManagedSession(params);
+		await this.#ensureModelCatalogReady(record.session);
 		const response: ForkSessionResponse = {
 			sessionId: record.protocolSessionId,
 			configOptions: this.#buildConfigOptions(record.session),
@@ -1690,6 +1694,10 @@ export class AcpAgent implements Agent {
 				interactivePrompts: this.#clientCapabilities?.elicitation?.form != null,
 			}),
 		);
+		// switchSession restores the persisted model from the current catalog.
+		// Wait for in-flight discovery first so discovery-backed saved models
+		// resolve during resume/fork instead of falling back before the catalog fills.
+		await session.modelRegistry.awaitBackgroundRefresh();
 		try {
 			const success = await session.switchSession(sourcePath);
 			if (!success) {
@@ -1717,6 +1725,10 @@ export class AcpAgent implements Agent {
 				interactivePrompts: this.#clientCapabilities?.elicitation?.form != null,
 			}),
 		);
+		// switchSession restores the persisted model from the current catalog.
+		// Wait for in-flight discovery first so discovery-backed saved models
+		// resolve during load/resume instead of falling back before the catalog fills.
+		await session.modelRegistry.awaitBackgroundRefresh();
 		try {
 			const success = await session.switchSession(sessionPath);
 			if (!success) {
@@ -2227,6 +2239,20 @@ export class AcpAgent implements Agent {
 		});
 	}
 
+	/**
+	 * Ensure the model catalog is populated before its config option is built.
+	 * `#buildConfigOptions` only advertises the `model` option when the catalog
+	 * is non-empty, and OMA fills discovery-backed providers asynchronously after
+	 * a session is ready. Await an in-flight refresh once when the catalog is
+	 * still empty so `session/new` (and friends) carry the `model` option on cold
+	 * start; warm sessions with a bundled catalog never block.
+	 */
+	async #ensureModelCatalogReady(session: AgentSession): Promise<void> {
+		if (session.getAvailableModels().length === 0) {
+			await session.modelRegistry.awaitBackgroundRefresh();
+		}
+	}
+
 	#buildConfigOptions(session: AgentSession): SessionConfigOption[] {
 		const currentModeId = this.#getCurrentModeId(session);
 		const modeOptions = this.#getAvailableModes(session).map(mode => ({
@@ -2298,7 +2324,17 @@ export class AcpAgent implements Agent {
 	}
 
 	async #setModelById(session: AgentSession, modelId: string): Promise<void> {
-		const model = session.getAvailableModels().find(candidate => this.#toModelId(candidate) === modelId);
+		let model = session.getAvailableModels().find(candidate => this.#toModelId(candidate) === modelId);
+		if (!model) {
+			// Model not in the current catalog. Wait for in-flight background
+			// discovery before declaring it unknown: on cold start, OMA populates
+			// discovery-backed providers seconds after the session is ready, so an
+			// ACP client (e.g. T3 Code) that selects a model in that window would
+			// otherwise get a spurious "Unknown ACP model". Mirrors rpc-mode
+			// `set_model`; models already in the bundled catalog skip the await.
+			await session.modelRegistry.awaitBackgroundRefresh();
+			model = session.getAvailableModels().find(candidate => this.#toModelId(candidate) === modelId);
+		}
 		if (!model) {
 			throw new Error(`Unknown ACP model: ${modelId}`);
 		}
