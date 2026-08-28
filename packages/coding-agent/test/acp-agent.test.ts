@@ -20,6 +20,7 @@ import type {
 	UsageFallbackConfirmation,
 } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { SILENT_ABORT_MARKER } from "@oh-my-pi/pi-coding-agent/session/messages";
+import { getRestorableSessionModels } from "@oh-my-pi/pi-coding-agent/session/session-context";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { DEFAULT_STT_MODEL_KEY, STT_MODEL_OPTIONS } from "@oh-my-pi/pi-coding-agent/stt/models";
 import { TaskTool } from "@oh-my-pi/pi-coding-agent/task";
@@ -152,11 +153,13 @@ class FakeAgentSession {
 	usageFallbackConfirmer: ((confirmation: UsageFallbackConfirmation) => Promise<boolean>) | undefined;
 	retryResult = false;
 	retryCalls = 0;
+	awaitBackgroundRefreshCalls = 0;
 	#listeners = new Set<(event: AgentSessionEvent) => void>();
 
 	constructor(
 		cwd: string,
-		private readonly models: Model[] = TEST_MODELS,
+		private models: Model[] = TEST_MODELS,
+		private pendingModelDiscovery: Model[] = [],
 	) {
 		this.sessionManager = SessionManager.create(cwd);
 		this.sessionId = this.sessionManager.getSessionId();
@@ -173,9 +176,25 @@ class FakeAgentSession {
 		return this.sessionManager.getHeader()?.title ?? `Session ${this.sessionId}`;
 	}
 
-	get modelRegistry(): { getApiKey: (model: Model) => Promise<string> } {
+	get modelRegistry(): {
+		getApiKey: (model: Model) => Promise<string>;
+		awaitBackgroundRefresh: () => Promise<void>;
+	} {
 		return {
 			getApiKey: async (_model: Model) => "test-key",
+			// Mirrors ModelRegistry.awaitBackgroundRefresh: a cold-start session
+			// discovers its catalog asynchronously; awaiting promotes the pending
+			// models into the live catalog exactly once.
+			awaitBackgroundRefresh: async () => {
+				this.awaitBackgroundRefreshCalls++;
+				if (this.pendingModelDiscovery.length > 0) {
+					this.models = [...this.models, ...this.pendingModelDiscovery];
+					this.pendingModelDiscovery = [];
+					if (!this.model) {
+						this.model = this.models[0];
+					}
+				}
+			},
 		};
 	}
 
@@ -306,6 +325,22 @@ class FakeAgentSession {
 		await this.sessionManager.setSessionFile(sessionPath);
 		this.sessionId = this.sessionManager.getSessionId();
 		this.agent.sessionId = this.sessionId;
+		const sessionContext = this.sessionManager.buildSessionContext();
+		const targetModels = getRestorableSessionModels(
+			sessionContext.models,
+			this.sessionManager.getLastModelChangeRole(),
+		);
+		for (const targetModel of targetModels) {
+			const slashIndex = targetModel.indexOf("/");
+			if (slashIndex <= 0) continue;
+			const provider = targetModel.slice(0, slashIndex);
+			const modelId = targetModel.slice(slashIndex + 1);
+			const restored = this.models.find(model => model.provider === provider && model.id === modelId);
+			if (restored) {
+				this.model = restored;
+				break;
+			}
+		}
 		return true;
 	}
 
@@ -486,6 +521,12 @@ async function createHarness(
 		clientCapabilities?: ClientCapabilities;
 		/** Runs before a notification is recorded, so a test can delay one delivery. */
 		sessionUpdateHook?: (notification: SessionNotification) => Promise<void> | void;
+		/**
+		 * Simulate OMA's async model discovery: every session starts with
+		 * `initial` in its catalog and promotes `pending` on the first
+		 * `awaitBackgroundRefresh`.
+		 */
+		modelDiscovery?: { initial?: Model[]; pending?: Model[] };
 	} = {},
 ): Promise<AgentHarness> {
 	const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "omp-acp-test-"));
@@ -518,10 +559,12 @@ async function createHarness(
 		closed: Promise.withResolvers<void>().promise,
 	} as unknown as AgentSideConnection;
 
-	const initialSession = new FakeAgentSession(cwdA);
+	const initialModels = options.modelDiscovery?.initial ?? TEST_MODELS;
+	const pendingModels = options.modelDiscovery?.pending ?? [];
+	const initialSession = new FakeAgentSession(cwdA, initialModels, pendingModels);
 	sessions.push(initialSession);
 	const factory = async (cwd: string, factoryOptions?: { interactivePrompts?: boolean }) => {
-		const session = new FakeAgentSession(cwd);
+		const session = new FakeAgentSession(cwd, initialModels, pendingModels);
 		const setToolUIContext = vi.fn();
 		sessions.push(session);
 		setToolUIContextSpies.push(setToolUIContext);
@@ -620,6 +663,74 @@ describe("ACP agent", () => {
 
 		harness.abortController.abort();
 		await Bun.sleep(0);
+	});
+
+	it("advertises the model option once cold-start discovery populates the catalog", async () => {
+		// OMA fills discovery-backed providers asynchronously after a session is
+		// ready. If `session/new` snapshots an empty catalog it omits the `model`
+		// option entirely — an ACP client (T3 Code) then never offers a model to
+		// switch to. #ensureModelCatalogReady must await discovery so the option
+		// is present in the initial response.
+		const harness = await createHarness({ modelDiscovery: { initial: [], pending: TEST_MODELS } });
+		const created = await harness.agent.newSession({ cwd: harness.cwdA, mcpServers: [] });
+
+		const modelOption = created.configOptions?.find(opt => opt.id === "model");
+		expect(modelOption?.type).toBe("select");
+		expect(
+			(modelOption as { options?: Array<{ value: string }> } | undefined)?.options?.map(opt => opt.value),
+		).toEqual(TEST_MODELS.map(model => `${model.provider}/${model.id}`));
+		const session = harness.findSession(created.sessionId);
+		expect(session?.awaitBackgroundRefreshCalls).toBeGreaterThan(0);
+	});
+
+	it("restores a discovery-backed saved model when loading a stored ACP session", async () => {
+		const harness = await createHarness({
+			modelDiscovery: { initial: [TEST_MODELS[0]!], pending: [TEST_MODELS[1]!] },
+		});
+		const created = await harness.agent.newSession({ cwd: harness.cwdA, mcpServers: [] });
+		const target = `${TEST_MODELS[1]!.provider}/${TEST_MODELS[1]!.id}`;
+		const sourceSession = harness.findSession(created.sessionId)!;
+		sourceSession.sessionManager.appendModelChange(target);
+		await sourceSession.sessionManager.flush();
+
+		await harness.agent.closeSession({ sessionId: created.sessionId });
+		const loaded = await harness.agent.loadSession({
+			sessionId: created.sessionId,
+			cwd: harness.cwdA,
+			mcpServers: [],
+		});
+
+		expectAcpStructure(zLoadSessionResponse, loaded);
+		const loadedSession = harness.sessions.at(-1)!;
+		expect(loadedSession.sessionId).toBe(created.sessionId);
+		expect(loadedSession.model?.id).toBe(TEST_MODELS[1]!.id);
+		expect(loadedSession.awaitBackgroundRefreshCalls).toBeGreaterThan(0);
+		const modelOption = loaded.configOptions?.find(opt => opt.id === "model") as
+			| { currentValue?: unknown }
+			| undefined;
+		expect(modelOption?.currentValue).toBe(target);
+	});
+
+	it("resolves a model switch after awaiting background discovery for a not-yet-cataloged model", async () => {
+		// The target model only appears after discovery, and the session already
+		// has a non-empty catalog so setup does not pre-await. #setModelById must
+		// await the background refresh and retry instead of throwing
+		// "Unknown ACP model" — the failure T3 Code hit against OMA v18.
+		const harness = await createHarness({
+			modelDiscovery: { initial: [TEST_MODELS[0]!], pending: [TEST_MODELS[1]!] },
+		});
+		const created = await harness.agent.newSession({ cwd: harness.cwdA, mcpServers: [] });
+		const target = `${TEST_MODELS[1]!.provider}/${TEST_MODELS[1]!.id}`;
+
+		await harness.agent.setSessionConfigOption({
+			sessionId: created.sessionId,
+			configId: "model",
+			value: target,
+		});
+
+		const session = harness.findSession(created.sessionId);
+		expect(session?.model?.id).toBe(TEST_MODELS[1]!.id);
+		expect(session?.awaitBackgroundRefreshCalls).toBeGreaterThan(0);
 	});
 
 	it("advertises plan mode and emits schema-valid mode updates", async () => {
