@@ -226,7 +226,7 @@ export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 			if (emojiSuggestions) return emojiSuggestions;
 		}
 
-// `@@` opens the entity (persona/agent) picker; `@@@`+ is the escape hatch
+		// `@@` opens the entity (persona/agent) picker; `@@@`+ is the escape hatch
 		// back to the file picker with a single `@` populated. A bare `@` stays the
 		// base provider's file mention, so only `@@`+ is intercepted here — and only
 		// at message start, matching `parseAdvisorAddress`, which routes an address

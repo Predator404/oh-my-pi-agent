@@ -365,7 +365,7 @@ export class Theme {
 	}
 
 	/**
- * Foreground ANSI for text rendered over a controlled theme background.
+	 * Foreground ANSI for text rendered over a controlled theme background.
 	 * Explicit theme colors win; terminal-default tokens become black or near-white.
 	 */
 	getFgOnBgAnsi(color: ThemeColor, background: ThemeBg): string {
@@ -391,7 +391,6 @@ export class Theme {
 		const light = this.statusLineLuminance !== undefined && this.statusLineLuminance > 0.5;
 		const baseHex = this.#hexBgColors.customMessageBg || (light ? "#ffffff" : "#111111");
 		return bgAnsi(mixHex(baseHex, colorHex, 0.16), this.mode);
-	}
 	}
 
 	/**

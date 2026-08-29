@@ -62,8 +62,8 @@ describe("async speculative compaction", () => {
 	function createMaintenance(
 		options: { asyncEnabled?: boolean; methodOrder?: CompactionMethod[]; model?: Model } = {},
 	): SessionMaintenance {
-const activeModel = options.model ?? model;
-		const agent = new Agent({
+		const activeModel = options.model ?? model;
+		agent = new Agent({
 			initialState: { model: activeModel, systemPrompt: ["Test"], tools: [], messages: [] },
 		});
 		const settings = Settings.isolated({

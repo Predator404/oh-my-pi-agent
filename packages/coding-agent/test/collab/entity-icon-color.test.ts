@@ -26,7 +26,7 @@ import {
 import { CollabSocket } from "@oh-my-pi/pi-coding-agent/collab/relay-client";
 import { entityGlyph } from "@oh-my-pi/pi-coding-agent/modes/components/agent-hub-renderer";
 import {
-	countRunningSubagentBadgeAgents,
+	getRunningSubagentBadgeAgentIds,
 	getRunningSubagentBadgeRegistry,
 } from "@oh-my-pi/pi-coding-agent/modes/running-subagent-badge";
 import { initTheme, setSymbolPreset, theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
@@ -104,8 +104,8 @@ function makeGuestContext(): InteractiveModeContext {
 		pendingTools: new Map(),
 		loadingAnimation: undefined,
 		statusLine: {
-			setSubagentCount: (count: number) => {
-				statusLineCount = count;
+			setRunningSubagents: (agentIds: readonly string[]) => {
+				statusLineCount = agentIds.length;
 			},
 			get subagentCount() {
 				return statusLineCount;
@@ -117,7 +117,7 @@ function makeGuestContext(): InteractiveModeContext {
 			markActivityEnd: () => {},
 		},
 		ui: { requestRender: () => {} },
-		chatContainer: { clear: () => {} },
+		chatContainer: { clear: () => {}, disposeChildren: () => {} },
 		resetObserverRegistry: () => {},
 		renderInitialMessages: () => {},
 		reloadTodos: () => Promise.resolve(),
@@ -128,7 +128,7 @@ function makeGuestContext(): InteractiveModeContext {
 		eventController: { handleEvent: () => Promise.resolve() },
 		syncRunningSubagentBadge: () => {
 			const registry = getRunningSubagentBadgeRegistry(ctx.collabGuest);
-			ctx.statusLine.setSubagentCount(countRunningSubagentBadgeAgents(registry));
+			ctx.statusLine.setRunningSubagents(getRunningSubagentBadgeAgentIds(registry));
 		},
 	} as unknown as InteractiveModeContext;
 	return ctx;
