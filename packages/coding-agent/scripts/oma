@@ -1,0 +1,70 @@
+#!/bin/sh
+# Dev launcher for the OMA CLI (`oma`), the Persistent Agents build of omp.
+#
+# Targets `src/oma.ts` (the OMA bin shim) rather than `src/cli.ts`: that shim
+# defaults `PI_CONFIG_DIR` to `.oma` so this build's sessions, registry, vault,
+# mnemopi banks, broker sockets, and auth stay disjoint from a stock `omp`
+# install. Same bunfig.toml-preload workaround as `scripts/omp` (see its header
+# comment): Bun reads `bunfig.toml` from the current working directory at
+# startup, so we launch from an empty, bunfig-free dir and restore the caller's
+# real cwd inside the process via the `omp.ts` preload shim before the
+# entrypoint's imports snapshot `process.cwd()`.
+set -e
+
+# Resolve this script's real location even when invoked through a symlink
+# (`$HOME/.local/bin/oma` -> this file).
+self=$0
+while [ -L "$self" ]; do
+	link=$(readlink "$self")
+	case $link in
+	/*) self=$link ;;
+	*) self=$(dirname "$self")/$link ;;
+	esac
+done
+scripts_dir=$(CDPATH= cd -- "$(dirname -- "$self")" && pwd -P)
+cli=$scripts_dir/../src/oma.ts
+preload=$scripts_dir/omp.ts
+timing_preload=$scripts_dir/../../utils/src/module-timer.ts
+
+# Resolve the Bun binary even when it is not on PATH. The dev launcher must
+# work from contexts that never source the user's shell rc (GUI launchers,
+# cron, non-interactive ssh), where the official installer's `~/.bun/bin` — a
+# per-user dir wired into PATH only via rc, never system-wide — is absent.
+# Fall back to the default install dir, then `$BUN_INSTALL`.
+find_bun() {
+	if command -v bun >/dev/null 2>&1; then
+		printf '%s\n' bun
+		return
+	fi
+	for cand in "$HOME/.bun/bin/bun" "${BUN_INSTALL:-}/bin/bun"; do
+		if [ -x "$cand" ]; then
+			printf '%s\n' "$cand"
+			return
+		fi
+	done
+	return 1
+}
+
+BUN=$(find_bun) || {
+	echo "error: bun not found on PATH or in \$HOME/.bun/bin or \$BUN_INSTALL/bin" >&2
+	exit 1
+}
+
+launch_dir=${OMP_DEV_LAUNCH_DIR:-${HOME}/.omp/.dev-cwd}
+mkdir -p "$launch_dir"
+
+OMP_LAUNCH_CWD=$PWD
+export OMP_LAUNCH_CWD
+cd "$launch_dir"
+# Preserve OMA's process identity on macOS under Herdr, mirroring `scripts/omp`.
+run_bun() {
+	if [ "${HERDR_ENV:-}" = 1 ] && [ "$(uname -s)" = Darwin ]; then
+		exec -a oma "$BUN" "$@"
+	fi
+	exec "$BUN" "$@"
+}
+
+if [ -n "${PI_TIMING:-}" ]; then
+	run_bun --preload "$preload" --preload "$timing_preload" "$cli" "$@"
+fi
+run_bun --preload "$preload" "$cli" "$@"
