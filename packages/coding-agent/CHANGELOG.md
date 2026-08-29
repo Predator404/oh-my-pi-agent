@@ -997,6 +997,7 @@
 
 ### Fixed
 
+- The `omp`/`oma` dev launchers now resolve Bun from `~/.bun/bin` or `$BUN_INSTALL/bin` when it is not on PATH, so launching from a GUI, cron, or non-interactive context (which never sources the shell rc) no longer fails with `bun: not found`.
 - Blank or whitespace-only `mnemopi.dbPath` now resolves to persistent agent storage instead of a volatile in-memory bank ([#9360](https://github.com/can1357/oh-my-pi/issues/9360)).
 ### Fixed
 
