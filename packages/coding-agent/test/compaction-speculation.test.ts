@@ -76,8 +76,8 @@ describe("async speculative compaction", () => {
 			) => Promise<{ document: string } | undefined>;
 		} = {},
 	): SessionMaintenance {
-const activeModel = options.model ?? model;
-		const agent = new Agent({
+		const activeModel = options.model ?? model;
+		agent = new Agent({
 			initialState: { model: activeModel, systemPrompt: ["Test"], tools: [], messages: [] },
 		});
 		const settings = Settings.isolated({
