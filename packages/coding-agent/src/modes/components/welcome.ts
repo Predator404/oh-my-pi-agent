@@ -7,8 +7,9 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@oh-my-pi/pi-tui";
-import { APP_NAME } from "@oh-my-pi/pi-utils";
+import { APP_NAME, VERSION } from "@oh-my-pi/pi-utils";
 import { theme } from "../../modes/theme/theme";
+import { OMA_VERSION } from "../../oma-identity";
 import tipsText from "./tips.txt" with { type: "text" };
 
 /** Tips embedded at build time, one per line; blanks dropped. */
@@ -155,7 +156,7 @@ export class WelcomeComponent implements Component {
 	#cachedLines: string[] | undefined;
 
 	constructor(
-		private version: string,
+		_version: string,
 		private modelName: string,
 		private providerName: string,
 		private recentSessions: RecentSession[] = [],
@@ -225,11 +226,8 @@ export class WelcomeComponent implements Component {
 		this.#stopAnimation();
 	}
 
-	/** Update the version embedded in the welcome border title. */
-	setVersion(version: string): void {
-		this.version = version;
-		this.invalidate();
-	}
+	/** Update the version embedded in the welcome border title (no-op: version now derived from build constants). */
+	setVersion(_version: string): void {}
 
 	setModel(modelName: string, providerName: string): void {
 		this.modelName = modelName;
@@ -392,7 +390,7 @@ export class WelcomeComponent implements Component {
 		const lines: string[] = [];
 
 		// Top border with embedded title
-		const title = ` ${APP_NAME} v${this.version} · agents `;
+		const title = ` ${APP_NAME} v${VERSION} · agents v${OMA_VERSION} `;
 		const titlePrefixRaw = hChar.repeat(3);
 		const titleStyled = theme.fg("dim", titlePrefixRaw) + theme.fg("muted", title);
 		const titleVisLen = visibleWidth(titlePrefixRaw) + visibleWidth(title);
