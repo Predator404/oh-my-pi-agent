@@ -636,7 +636,7 @@ export function lockupNode(version: string): NativeNode {
 }
 
 /** Block-grid brand mark shared by the welcome and setup surfaces. */
-export const PI_LOGO = ["████████████", "   ██  ██   ", "   ██  ██   ", "   ▒▒  ██   ", "       ██   "];
+export const PI_LOGO = ["████████████", "   ██  ██   ", "   ██░░██   ", "   ▒▒  ██   ", "       ██   "];
 
 /** Columns of {@link PI_LOGO}. */
 const LOGO_WIDTH = Math.max(...PI_LOGO.map(row => row.length));

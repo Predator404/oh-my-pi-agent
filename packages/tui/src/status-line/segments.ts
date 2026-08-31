@@ -241,7 +241,7 @@ const piSegment: StatusLineSegment = {
 		// trailing space here would double the gap at the first separator (#11103).
 		const content =
 			ctx.turnElapsedMs != null
-				? `${brandMark(brandSpinnerFrame(ctx.now?.getTime()), profile)} ${brandTimer(ctx.turnElapsedMs)}${oma ? "A" : ""}`
+				? `${brandMark(brandSpinnerFrame(ctx.now?.getTime()), profile)} ${brandTimer(ctx.turnElapsedMs)}`
 				: `${brandMark(inactiveIcon, profile)}${oma ? "A" : ""}`;
 		return { content: `${fgAnsi}${content}\x1b[39m`, visible: true };
 	},
