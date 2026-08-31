@@ -163,7 +163,7 @@ const piSegment: StatusLineSegment = {
 		// whole-unit turn timer (port of rust omp's status-band active brand).
 		const content =
 			ctx.turnElapsedMs != null
-				? `${brandSpinnerFrame(ctx.now?.getTime())} ${statusValue(ctx, brandTimer(ctx.turnElapsedMs))}${oma ? "A" : ""} `
+				? `${brandSpinnerFrame(ctx.now?.getTime())} ${statusValue(ctx, brandTimer(ctx.turnElapsedMs))} `
 				: inactiveIcon
 					? `${inactiveIcon}${oma ? "A" : ""} `
 					: "";

@@ -490,7 +490,7 @@ export class WelcomeComponent implements Component {
 }
 
 /** Block-grid brand mark shared by the welcome and setup surfaces. */
-export const PI_LOGO = ["████████████", "   ██  ██   ", "   ██  ██   ", "   ▒▒  ██   ", "       ██   "];
+export const PI_LOGO = ["████████████", "   ██  ██   ", "   ██░░██   ", "   ▒▒  ██   ", "       ██   "];
 
 /** Multi-stop palette for the diagonal gradient — warm faded reds → oranges → yellows. */
 const GRADIENT_STOPS: ReadonlyArray<readonly [number, number, number]> = [
