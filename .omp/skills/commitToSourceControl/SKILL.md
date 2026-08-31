@@ -1,5 +1,5 @@
 ---
-name: CommitToSourceControl
+name: commitToSourceControl
 description: End-to-end OMA release workflow — classify pending changes, bump the oma-agent SemVer (patch for bugs, minor for small changes/features, major for big/breaking changes), build the binary, update the vault changelog, commit both repos, and optionally open + merge a PR. Use when asked to commit, release, ship, or cut a new OMA version.
 license: MIT
 ---
