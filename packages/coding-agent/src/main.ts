@@ -31,6 +31,7 @@ import { applyStartupCwd } from "./cli/startup-cwd";
 import { getLatestRelease } from "./cli/update-cli";
 import { findConfigFile } from "./config";
 import { ModelRegistry } from "./config/model-registry";
+import { isOmaBuild, OMA_VERSION } from "./oma-identity";
 import { formatModelSelectorValue, parseModelString } from "@oh-my-pi/pi-tui/overlays/model-selector";
 import {
 	DEFAULT_PREWALK_TARGET,
@@ -2358,9 +2359,12 @@ export async function runRootCommand(
 				try {
 					stopStartupWatchdog();
 					logger.endTiming();
+					// The welcome title shows both versions on the OMA build: the upstream
+					// omp base this fork rides on, and OMA's own release number.
+					const welcomeVersion = isOmaBuild() ? `${VERSION} · agents v${OMA_VERSION}` : VERSION;
 					await runInteractiveMode(
 						session,
-						VERSION,
+						welcomeVersion,
 						startupChangelog,
 						notifs,
 						versionCheckPromise,
