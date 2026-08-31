@@ -1,13 +1,17 @@
 ---
 name: followup
-description: Capture an OMA follow-up item from the `@@Phi: follow-up - <text>` trigger — append it to the vault follow-up register under the active change section, then commit and push the vault. Use when `@@Phi: follow-up -` appears in a message.
+description: Capture an OMA follow-up item from the `@@Phi: follow-up - <text>` trigger — append it to the vault follow-up register under a topic-based section, then commit and push the vault. Use when `@@Phi: follow-up -` appears in a message.
 license: MIT
 ---
 
 # Follow-up Capture
 
 Trigger: `@@Phi: follow-up - <text>`. Everything after the hyphen is the
-follow-up body. Append it to the OMA follow-up register and push the vault.
+follow-up body. Append it to the OMA follow-up register under a topic section
+and push the vault.
+
+Follow-ups are open investigation/implementation tasks — they are NOT tied to a
+specific oma-agent version. Group them by topic, not by release.
 
 ## Location
 
@@ -16,11 +20,11 @@ follow-up body. Append it to the OMA follow-up register and push the vault.
 
 ## Format
 
-Each follow-up is a `- [ ]` checklist item under the most recent change section.
-If no section exists for the current change, create one:
+Each follow-up is a `- [ ]` checklist item under a `## <topic>` heading.
+Topics group related items; create a new section when no existing topic fits.
 
 ```markdown
-## <change title> — <commit prefix>
+## Agent UX
 
 - [ ] <captured follow-up text>
 ```
@@ -34,38 +38,47 @@ Items are open (`[ ]`) by default. When resolved, mark `[x]`.
 Parse the trigger: `@@Phi: follow-up - <text>`. Capture `<text>` verbatim
 (trim leading/trailing whitespace only).
 
-### 2. Identify the active change
+### 2. Determine the topic
 
-Read the vault changelog (`Changelog.md`) to find the most recent dated entry.
-Use its title as the section heading for the follow-up register.
+Infer a short topic name from the follow-up content. Examples:
 
-If the active change has no section in `follow-ups.md` yet, create one matching
-the changelog entry title.
+| Follow-up about… | Topic |
+|---|---|
+| Agent prompts, addressing, autocomplete, UX | `Agent UX` |
+| Daemon, workers, broker, spawn | `Daemon / workers` |
+| Vault, memory, embeddings, notes | `Vault & memory` |
+| CLI, commands, flags, output | `CLI` |
+| TUI, rendering, status line, colors | `TUI` |
+| Skills, tools, MCP | `Skills & tools` |
+| Build, compile, release, CI | `Build & release` |
+
+If no existing topic section fits, create a new `## <topic>` heading.
 
 ### 3. Append the item
 
-Insert a new `- [ ] <text>` line under the active change section. If the
-section already has items, append after the last one.
+Insert a new `- [ ] <text>` line under the topic section. If the section
+already has items, append after the last one.
 
 ### 4. Commit and push the vault
 
 ```bash
 cd ~/Work/git/oma-vault
 git add projects/oh-my-pi-agents/follow-ups.md
-git commit -m "follow-up: <brief summary of captured item>"
+git commit -m "follow-up: <topic> — <brief summary>"
 git push origin main
 ```
 
 - Stage ONLY the follow-ups file. Leave `.obsidian/` churn unstaged.
-- Brief commit message summarizing the captured item.
 
 ## Gotchas
 
+- **NEVER tie follow-ups to oma-agent versions.** They are open tasks, not
+  release notes. Use topic sections.
 - **NEVER overwrite existing items.** Append only; existing `[x]` and `[ ]`
   items are immutable history.
 - **One item per trigger.** Multiple follow-ups → multiple `@@Phi: follow-up -`
   messages.
 - **Link deep threads.** If a follow-up needs more than a paragraph, create a
-  note under `investigations/` and link it from the item instead of restating.
+  note under `investigations/` and link it from the item.
 - **Vault push is independent.** Failure to push the vault does not block the
   conversation; surface the error and retry.
