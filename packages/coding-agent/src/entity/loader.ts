@@ -116,6 +116,13 @@ async function registriesToScan(options: EntityRegistryOptions): Promise<ScanReg
 	if (options.registryRoot?.trim()) {
 		return [{ id: DEFAULT_REGISTRY_ID, root: path.resolve(options.registryRoot.trim()), visibility: "public" }];
 	}
+	// Legacy single-registry env-var override: when set, treat it as a direct
+	// registry root so pre-ADR-0004 tests and single-vault setups keep working
+	// even when a registries manifest file exists at the default location.
+	const legacyRoot = process.env[ENTITY_REGISTRY_ENV]?.trim();
+	if (legacyRoot) {
+		return [{ id: DEFAULT_REGISTRY_ID, root: path.resolve(legacyRoot), visibility: "public" }];
+	}
 	const manifest = options.manifest ?? (await loadRegistryManifest({ manifestPath: options.manifestPath }));
 	return [...manifest.registries.values()].map(entry => ({
 		id: entry.id,
