@@ -96,7 +96,7 @@ interface KernelSessionRegistry<
 	disposeByOwner(ownerId: string): Promise<void>;
 	/** True when a live (or still-starting) kernel session is currently held for this owner. Never spawns. */
 	hasOwner(ownerId: string): boolean;
-	executeOnSession(code: string, cwd: string, options: TOptions): Promise<TResult>;
+	executeOnSession(code: string, cwd: string, options: TOptions): Promise<R>;
 	peekLiveKernel(cwd: string, options: TOptions): TKernel | undefined;
 	getPresentSession(cwd: string, options: TOptions): TSession | undefined;
 }
@@ -459,7 +459,7 @@ export function createKernelSessionRegistry<
 		return sessions.get(descriptor.buildSessionKey(sessionId, cwd, options.interpreter));
 	}
 
-	async function executeOnSession(code: string, cwd: string, options: TOptions): Promise<TResult> {
+	async function executeOnSession(code: string, cwd: string, options: TOptions): Promise<R> {
 		const sessionId = options.sessionId ?? `session:${cwd}`;
 		const sessionKey = descriptor.buildSessionKey(sessionId, cwd, options.interpreter);
 		if (options.bridge && !options.bridgeSessionId) {
