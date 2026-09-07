@@ -4,74 +4,51 @@ description: Update the OMA project changelog in the phi oma-vault — record OM
 license: MIT
 ---
 
-# OMA changelog update
+# OMA Changelog Update
 
-End-to-end flow for recording work in the phi OMA changelog. The central,
-recurring rule that keeps it sane: **OMA's own work and upstream rebases are
-never lumped into one entry.**
+**Core rule: OMA's own work and upstream rebases are never one entry.**
 
-## Location & repo
+## Location
 
-- Changelog: `~/Work/git/oma-vault/projects/oh-my-pi-agents/confluence/Changelog.md`
-- Vault repo: `Predator404/oma-vault.git`, branch `main`.
-- Commit and push **there**, never in the `oh-my-pi-agent` repo. The repo's
-  `packages/coding-agent/CHANGELOG.md` is the OMP/upstream changelog — do NOT
-  conflate the two.
+`~/oma-registry/vault/projects/oh-my-pi-agents/confluence/Changelog.md` — commit/push vault only (`Predator404/oma-vault.git`, branch `main`). NEVER commit to `oh-my-pi-agent`. `packages/coding-agent/CHANGELOG.md` is the OMP/upstream changelog — do not conflate.
 
-## Mental model — two independent version tracks
+## Version tracks
 
-- **`omp`** — upstream-synced. Moves **only on an upstream rebase**; it is the
-  OMP release OMA sits on. Pure OMP-core fixes contributed back upstream ride
-  the OMP changelog, not this one.
-- **`oma-agent`** — SemVer keyed to OMA's own agent work. Feature → minor bump,
-  fix → patch bump. Headline number describing the persistent-agent build.
+- **`omp`** — upstream-synced; moves only on upstream rebase.
+- **`oma-agent`** — SemVer for OMA's own work. Feature → minor, fix → patch.
 
-Every entry is tagged `oma-agent X.Y.Z · on omp A.B.C`.
+Every entry tagged: `oma-agent X.Y.Z · on omp A.B.C`.
 
 ## Legend
 
-- 🚀 feature · 🐞 fix · 🔧 internal/process
-- Upstream rebases are `> ### 🔄 UPSTREAM REBASE — omp X → omp Y (date)` block
-  quotes with links to the OMP release notes / diff / changelog.
-
-## Core rule
-
-- Each OMA change gets its **own dated entry**:
-  `## YYYY-MM-DD — oma-agent X.Y.Z · on omp A.B.C`.
-- An upstream rebase gets a **separate block quote**. It describes only the
-  pulled-in OMP range + links. It may point to the OMA entry that carries the
-  OMA-side reconciliation, but never narrates OMA features itself.
+🚀 feature · 🐞 fix · 🔧 internal  
+Upstream rebases: `> ### 🔄 UPSTREAM REBASE — omp X → omp Y (date)` block quote with OMP release links.
 
 ## Workflow
 
-1. Read the current changelog to learn the recorded `omp` base and `oma-agent`
-   version (header + newest dated entry).
-2. Determine the `omp` base from the fork's rebase target: the OH-MY-PI
-   `packages/coding-agent/CHANGELOG.md` latest released `## [X]` is the OMP
-   release current `upstream/main` sits on. A rebase moves the recorded base to
-   that release.
-3. Classify each item: OMA's own work (→ its own `oma-agent` entry) vs an
-   upstream pull (→ a rebase block).
-4. Compute the `oma-agent` bump over the current version: feature → minor, fix
-   → patch. No new agent work? leave the number alone.
-5. Write the changelog:
-   - `## [Unreleased]` = `_Nothing pending._` (or only genuinely pending items).
-   - A dated entry for the OMA work, tagged `oma-agent X.Y.Z · on omp A.B.C`.
-   - A separate `> ### 🔄 UPSTREAM REBASE` block if a rebase happened.
-6. Keep `[Unreleased]` empty once the work is versioned under its dated entry.
-7. Update the two-version-track header (`Current: omp A.B.C` / `oma-agent
-   X.Y.Z`) and the frontmatter `updated:` date.
+1. Read changelog — find current `omp` base and `oma-agent` version.
+2. `omp` base: latest released `## [X]` in `packages/coding-agent/CHANGELOG.md` = what `upstream/main` sits on.
+3. Classify: OMA's own work → `oma-agent` dated entry; upstream pull → rebase block quote.
+4. Bump `oma-agent`: feature → minor, fix → patch. No new OMA work → no bump.
+5. Write:
+   - `## [Unreleased]` = `_Nothing pending._`
+   - `## YYYY-MM-DD — oma-agent X.Y.Z · on omp A.B.C` with 🚀/🐞/🔧 bullets
+   - Separate `> ### 🔄 UPSTREAM REBASE` block if rebase occurred
+6. Update two-version-track header and frontmatter `updated:`.
 
-## Gotchas
+## Commit
 
-- **Stage/push only the changelog** (and any vault docs you intentionally
-  changed). Leave `.obsidian/` app churn (`community-plugins.json`,
-  `core-plugins.json`, plugin `data.json`) unstaged.
-- Never rewrite already-released dated entries — append / add newest-first only;
-  released history is immutable.
-- A rebase can leave the repo CHANGELOG with duplicated released sections; that
-  reconciliation is a **separate repo task**, not part of this vault flow.
-- The follow-up register
-  (`projects/oh-my-pi-agents/follow-ups.md`) is the binding parallel to the
-  changelog: OMA feature/bug work also gets its open follow-ups recorded there
-  (ADR 0003). A change isn't done until both are updated.
+```sh
+cd ~/oma-registry/vault
+git add projects/oh-my-pi-agents/confluence/Changelog.md
+git commit -m "changelog: oma-agent X.Y.Z — <brief>"
+git push origin main
+```
+
+Stage ONLY the changelog (and intentional vault docs) — leave `.obsidian/` churn unstaged.
+
+## Rules
+
+- NEVER rewrite released dated entries — append/newest-first only.
+- Rebase may leave `packages/coding-agent/CHANGELOG.md` with duplicated sections — reconcile in a separate repo task, not here.
+- Change is not done until changelog AND `follow-ups.md` are both updated (ADR 0003).

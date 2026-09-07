@@ -6,139 +6,103 @@ license: MIT
 
 # Rebase fork on upstream
 
-Bring a downstream branch (the fork's work) up to date against the latest
-upstream `main`, preserving every fork-only change. History rewrite ahead:
-rebase is destructive, so surface choices to the user before rewriting.
+History rewrite — surface choices before executing. `--force-with-lease` always; never bare `--force`.
 
-## Goal & policy
+**Conflict policy:**
+1. Fork feature vs upstream logic → fork feature wins, adapted to new structure
+2. Upstream renamed a symbol the fork carried → adopt upstream name; drop dangling refs
+3. Two distinct additions in same spot → keep both
+4. Stylistic divergence → fork wins
 
-- Goal: `DOWNSTREAM == upstream/main + all fork commits` (no fork change lost).
-- Conflict policy, in order:
-  1. **Fork feature vs upstream logic** → keep the fork's feature, adapted to the
-     new upstream structure.
-  2. **Upstream renamed a symbol/field the fork also carried** → adopt the
-     upstream name; the newer upstream implementation supersedes the stale fork
-     name (dead fork-rename refs get removed, not kept).
-  3. **Two distinct additions landed in the same spot** (different methods,
-     imports, object keys) → keep BOTH.
-  4. **Pure stylistic fork divergence** (colors, branding, wording) → fork's wins.
-- Push uses `--force-with-lease`, never a bare `--force`.
-
-## Phase 1 — Map the topology
-
-Read-only; gather ground truth before touching anything.
+## Phase 1 — Map
 
 ```sh
-git remote -v                      # upstream = where we forked FROM, origin = the fork
-git branch -vv                     # local branches + their tracking/divergence
-git status                         # uncommitted work MUST be handled before rebase
+git remote -v                      # upstream = forked FROM; origin = the fork
+git branch -vv
+git status                         # uncommitted WIP must be handled first
 git fetch upstream && git fetch origin
-git merge-base DOWNSTREAM upstream/main   # true fork point (NOT necessarily origin/main)
-git rev-list --count DOWNSTREAM..upstream/main   # how far upstream moved
-git rev-list --count upstream/main..DOWNSTREAM   # how many fork commits to replay
-git log --oneline upstream/main..DOWNSTREAM      # the exact commit list to replay
+git merge-base DOWNSTREAM upstream/main        # true fork point
+git rev-list --count DOWNSTREAM..upstream/main
+git rev-list --count upstream/main..DOWNSTREAM
+git log --oneline upstream/main..DOWNSTREAM
 ```
 
-- The fork point is `git merge-base DOWNSTREAM upstream/main`, not `origin/main`
-  (the fork's own `main` is usually stale). Confirm the count of commits to
-  replay; it is often far smaller than `upstream/main advance`.
-- Check `DOWNSTREAM` vs `origin/DOWNSTREAM`: if behind, the fork has unpulled
-  commits on the remote. Those MUST be folded in before rebasing or they'd be
-  dropped from the rewritten result.
+Fork point: `merge-base DOWNSTREAM upstream/main`, not `origin/main`. `DOWNSTREAM` behind `origin/DOWNSTREAM` → fold in unpulled commits first; they drop on rewrite otherwise.
 
-Decisions to confirm with the user (each has materially different output):
+**Confirm before proceeding:**
+1. Base: `upstream/main` (default) vs stale `origin/main`
+2. WIP: commit (default) or `git stash -u`
+3. Unpulled fork commits: fast-forward (default: yes)
+4. After rebase: force-push or hold for review
 
-1. **Base**: latest `upstream/main` (where the fork came from) vs the fork's own
-   stale `origin/main`. Default: `upstream/main`.
-2. **Uncommitted WIP**: commit it onto `DOWNSTREAM` first, or `git stash` (with
-   `-u` for untracked). Never discard it. Default: commit.
-3. **Unpulled fork commits**: fast-forward to include them. Default: yes.
-4. **After rebase**: force-push or leave local for review. Default: confirm.
-
-## Phase 2 — Prepare (fold in work that must survive)
+## Phase 2 — Prepare
 
 ```sh
-# WIP committed? then local DOWNSTREAM has diverged from origin/DOWNSTREAM.
-git add -A && git commit -m "<coherent WIP summary>"
-# Fold in the unpulled fork commits by replaying just the WIP commit on top:
-git rebase origin/DOWNSTREAM          # clean, keeps the 5 unpulled commits + WIP
-git log --oneline -6 DOWNSTREAM       # confirm tip: WIP over the unpulled commits
+git add -A && git commit -m "<WIP summary>"
+git rebase origin/DOWNSTREAM   # seats WIP on top of unpulled commits
+git log --oneline -6 DOWNSTREAM
 ```
 
-If you committed WIP, a plain `git pull --ff-only` is no longer possible (the
-local tip moved); use `git rebase origin/DOWNSTREAM` instead so the WIP commit
-sits on top of the unpulled commits.
+`git pull --ff-only` fails after WIP commit (tip moved) — use `git rebase origin/DOWNSTREAM`.
 
-## Phase 3 — The rebase
+## Phase 3 — Rebase
 
 ```sh
 git rebase --onto upstream/main <FORK_POINT> DOWNSTREAM
 ```
 
-- Default (no `--rebase-merges`) linearizes: `Merge PR #…` wrapper commits are
-  dropped; their content commits replay as a clean sequence. State this to the
-  user. (Use `--rebase-merges` only if preserving merge topology is required.)
-- Expect conflicts on files both sides touch: changelogs, lockfiles, the fork's
-  feature modules, shared renderers.
+Default: linearizes; `Merge PR #…` wrappers drop, content replays clean. State this to user. `--rebase-merges` only if topology must be preserved.
 
-### Resolving conflicts (apply Phase 1 policy per hunk)
-
-- Read the full 3-way picture, not just the marker text: `git show
-  upstream/main:path` tells you the authoritative upstream side; check whether
-  the fork-side symbol was renamed upstream.
-- Merge upstream's newer structure AND the fork's feature together where both
-  advance the same code (e.g. upstream spinner + fork "brand A" marker → keep
-  upstream's active-state impl and re-apply the fork's distinguishing marker to
-  it). Adopt the upstream identifier when the feature was renamed.
-- Additive differences (distinct methods in one spot) → keep both, watching
-  brace balance and duplicate keys.
-- Remove now-dead fork-rename refs that a rename supersede left dangling;
-  a conflicting file may also hold cleanly-auto-merged stale refs elsewhere.
-
-Beware two recurring structural bugs after hand-merging, both from an extra
-trailing `}` or flattened indentation:
-
-- **Duplicate/extra closing brace** → "Illegal return statement outside of a
-  function" / "Expected a statement but instead found `}`" parser errors, plus
-  cascading diagnostics. Check brace balance at every merged method boundary.
-- **Flattened indentation** → a REWRITE's first line inherits context indent but
-  continuation lines carry their own depth; a block rewritten at column 0 loses
-  its tabs. Verify tab depth after each multi-line merge.
+### Conflicts
 
 ```sh
-# after resolving a file:
 git add <file>
 git -c core.editor=true rebase --continue
 ```
 
+`git show upstream/main:path` for the authoritative upstream side.
+
+- Both sides advance same code → keep both; adopt upstream identifier if renamed
+- Additive (distinct methods) → keep both; check brace balance, no duplicate keys
+- Dangling fork-rename refs after supersede → remove
+
+**Post-merge structural bugs:**
+- Extra `}` → "Illegal return statement" + cascading errors. Check brace balance at every merged method boundary.
+- Flattened indentation → block loses tabs at column 0. Verify tab depth after each multi-line merge.
+
 ## Phase 4 — Verify
 
 ```sh
-git rev-list --left-right --count upstream/main...DOWNSTREAM  # 0 <N>: ahead only
+git rev-list --left-right --count upstream/main...DOWNSTREAM  # expect: 0 <N>
 git status                      # must be clean
-<project-check>                 # e.g. bun check (biome + tsgo); fix every error
-<test-command> <fork-test-files># run the fork's own tests, esp. conflict-touched areas
 ```
 
-- Post-rebase type/lint fixes are uncommitted working-tree edits on top of the
-  fresh rebase. Before pushing you MUST commit them (`fix(scope): reconcile
-  tests/renderers with upstream after rebase`); otherwise the push ships the
-  broken pre-fix state. Re-run the check after committing.
-- A failing test whose failure also reproduces on a clean `upstream/main`
-  checkout (`git worktree add /tmp/up-ck upstream/main`) is a PRE-EXISTING
-  upstream issue, not your regression — do not chase it.
+**Native rebuild** — MUST run when upstream touched `crates/*`, `packages/natives/`, or any native export:
+
+```sh
+bun run build:native   # compiles Rust + pi-natives; regenerates *.node + packages/natives/index.js
+```
+
+> `bun check`/`bun build` never invoke the Rust toolchain → stale `.node` after crate changes → exports (e.g. `editDescription`) are `undefined` at runtime. Run before project check.
+
+After rebuild: `oma --version` / `oma --help` work; native exports load as functions, not `undefined`.
+
+```sh
+<project-check>                  # bun check; fix every error
+<test-command> <fork-test-files>
+```
+
+Post-rebase fixes are uncommitted edits — MUST commit before pushing (`fix(scope): reconcile after rebase`); re-run check after commit.
+
+Test failing on clean `upstream/main` worktree (`git worktree add /tmp/up-ck upstream/main`) → pre-existing upstream issue; do not chase.
 
 ## Phase 5 — Push
 
 ```sh
 git push --force-with-lease origin DOWNSTREAM:DOWNSTREAM
-# then, after committing any post-rebase fixes:
-git push origin DOWNSTREAM:DOWNSTREAM   # plain fast-forward, no force needed
-# confirm:
+git push origin DOWNSTREAM:DOWNSTREAM  # after post-rebase fix commits
 git rev-list --left-right --count upstream/main...origin/DOWNSTREAM
 git log --oneline -1 origin/DOWNSTREAM
 ```
 
-Verify `origin/DOWNSTREAM` matches local `DOWNSTREAM`. Report: the fork point,
-commits replayed, conflicts resolved (with the policy applied), check/test
-results, and the pre-existing (non-regression) failures you confirmed.
+Report: fork point · commits replayed · conflicts resolved (policy applied) · check/test results · pre-existing failures confirmed.

@@ -6,132 +6,107 @@ license: MIT
 
 # Commit to Source Control
 
-Full OMA release pipeline: inventory → classify → bump → build → changelog →
-commit → push → PR (optional). Every step gates the next; a failure MUST be
-resolved before continuing.
+Full OMA release pipeline. Each step gates the next; failures MUST be resolved before continuing.
 
 ## Repos
 
 | Repo | Remote | Branch | Holds |
 |---|---|---|---|
 | `oh-my-pi-agent` | `origin` (Predator404/oh-my-pi-agent) | `oma` | Source, binary, `OMA_VERSION` |
-| `oma-vault` | `origin` (Predator404/oma-vault) | `main` | Changelog, follow-ups, docs |
+| `oma-vault` | `origin` (Predator404/oma-vault) | `main` | Changelog, follow-ups |
 
-## Version Bump Rules
+## Version bump
 
-Read current `OMA_VERSION` from `packages/coding-agent/src/oma-identity.ts`.
-Classify every pending change (git diff against `origin/oma`), then bump
-**exactly one segment** — the highest classification wins:
+`OMA_VERSION` in `packages/coding-agent/src/oma-identity.ts`. Classify pending changes (`git diff origin/oma`); highest class wins. NEVER bump more than one segment.
 
-| Classification | Bump | Examples |
+| Class | Bump | Examples |
 |---|---|---|
-| **Patch** (`Z`) | Bug fixes, typo corrections, visual glitches, minor cleanup, display fixes | `0.9.0` → `0.9.1` |
-| **Minor** (`Y`) | New features, small enhancements, non-breaking additions, new skills, logo/skin changes | `0.9.0` → `0.10.0` |
-| **Major** (`X`) | Breaking API changes, architecture rewrites, daemon protocol bumps, vault schema changes | `0.9.0` → `1.0.0` |
+| Bug, typo, cleanup | Patch | `0.9.1 → 0.9.2` |
+| Feature, enhancement, new skill | Minor | `0.9.1 → 0.10.0` |
+| Breaking API/arch/protocol | Major | `0.9.1 → 1.0.0` |
 
-- **Tie-breaking**: feature + bug in one batch → minor (feature dominates).
-- **No net change**: leave version alone; skip the bump step.
-- NEVER bump more than one segment per release.
-- NEVER bump the `omp` base version — that moves ONLY on an upstream rebase
-  (delegates to `omaChangelogUpdate` skill).
+Feature + bug in one batch → minor. No net change → no bump. NEVER bump `omp` base — moves only on upstream rebase (`omaChangelogUpdate` skill).
 
 ## Workflow
 
-### 1. Inventory changes
+### 1. Inventory
 
-```bash
-git diff origin/oma --stat
-git diff origin/oma
+```sh
+git diff origin/oma --stat && git diff origin/oma
 ```
 
-List every changed file. Classify each as bug, feature, or internal. State the
-classification explicitly before touching any file.
+List every changed file; classify as bug, feature, or internal. State classification before touching files.
 
-### 2. Compute new version
+### 2. Compute version
 
-Apply the bump rules above. State the current version, the classification, and
-the new version. Example: `0.9.0 + bug fix → patch → 0.9.1`.
+State: current · classification · new. Example: `0.9.1 + bug → patch → 0.9.2`.
 
-### 3. Build the binary
+### 3. Build
 
-```bash
+```sh
 cd packages/coding-agent && bun run build
 ```
 
-- MUST exit 0. Failure → fix; NEVER proceed with a broken build.
-- Binary lands at `packages/coding-agent/dist/omp`.
+MUST exit 0; binary → `dist/omp`. Failure → fix; NEVER proceed with broken build.
 
-### 4. Update the vault changelog
+### 4. Vault changelog
 
-Delegate to the `omaChangelogUpdate` skill procedure:
-
-- Read `~/Work/git/oma-vault/projects/oh-my-pi-agents/confluence/Changelog.md`.
-- Update frontmatter `updated:` and two-version-track header.
-- Add a new dated entry `## YYYY-MM-DD — oma-agent X.Y.Z · on omp A.B.C`
-  with a 🚀/🐞/🔧 bullet per change.
-- Keep `[Unreleased]` as `_Nothing pending._`.
+Delegate to `omaChangelogUpdate` skill:
+- Read `~/oma-registry/vault/projects/oh-my-pi-agents/confluence/Changelog.md`
+- Update frontmatter `updated:` and two-version-track header
+- Add `## YYYY-MM-DD — oma-agent X.Y.Z · on omp A.B.C` with 🚀/🐞/🔧 bullets
+- Keep `[Unreleased]` as `_Nothing pending._`
 
 ### 5. Bump OMA_VERSION
 
-```typescript
+```ts
 // packages/coding-agent/src/oma-identity.ts
-export const OMA_VERSION = "X.Y.Z"; // ← new version
+export const OMA_VERSION = "X.Y.Z";
 ```
 
-### 6. Commit the source repo
+### 6. Commit source repo
 
-```bash
+```sh
 git add <changed files>
 git commit -m "feat(oma): <brief>" -m "<bullet list>"
 git push origin oma
 ```
 
-- Conventional commit prefix: `feat(oma):`, `fix(oma):`, `chore(oma):`.
-- MUST push `oma` branch, NEVER `main`/`master`.
-- Run `bun check` before committing if TypeScript changed.
+Prefix: `feat(oma):` / `fix(oma):` / `chore(oma):`. Push `oma` — NEVER `main`/`master`. Run `bun check` first if TypeScript changed.
 
-### 7. Commit the vault
+### 7. Commit vault
 
-```bash
-cd ~/Work/git/oma-vault
+```sh
+cd ~/oma-registry/vault
 git add projects/oh-my-pi-agents/confluence/Changelog.md
 git commit -m "changelog: oma-agent X.Y.Z — <brief>"
 git push origin main
 ```
 
-- Stage ONLY the changelog. Leave `.obsidian/` churn unstaged.
+Stage ONLY the changelog — leave `.obsidian/` churn unstaged.
 
-### 8. PR gate (optional)
+### 8. PR (optional)
 
-When review is required before merge:
-
-```bash
-gh pr create \
-  --repo Predator404/oh-my-pi-agent \
-  --base oma --head oma \
-  --title "feat(oma): <brief>" \
-  --body "<change summary>"
+```sh
+gh pr create --repo Predator404/oh-my-pi-agent --base oma --head oma \
+  --title "feat(oma): <brief>" --body "<summary>"
+gh pr view --json state,reviewDecision
+gh pr merge --squash --delete-branch
 ```
 
-- Wait for approval: `gh pr view --json state,reviewDecision`.
-- On approval: `gh pr merge --squash --delete-branch`.
-- Skip this step for direct-push workflow.
+Skip for direct-push workflow.
 
 ### 9. Verify
 
-```bash
+```sh
 cd packages/coding-agent && dist/omp --version   # must show oma/X.Y.Z
-git -C ~/Work/git/oma-vault log -1 --oneline     # vault commit live
+git -C ~/oma-registry/vault log -1 --oneline
 ```
 
 ## Gotchas
 
-- **NEVER commit unrelated generated files.** Build may regenerate
-  `browser-relay` assets or `collab-web` bundles identically; check
-  `git status` before staging.
-- **NEVER bump the omp base version.** It moves only on upstream rebase.
-- **Two repos, two commits.** Both MUST succeed; handle failures independently.
-- **Changelog is immutable history.** Append only; NEVER edit released entries
-  unless explicitly renumbering under this skill's version rules.
-- **`bun check` before commit** when TypeScript changed. Broken mainline after
-  commit is a regression.
+- NEVER commit unrelated generated files (`browser-relay`, `collab-web` bundles) — check `git status` before staging.
+- NEVER bump `omp` base version.
+- Two repos, two commits — both MUST succeed; handle independently.
+- Changelog: append only; NEVER edit released entries.
+- `bun check` before commit when TypeScript changed.
