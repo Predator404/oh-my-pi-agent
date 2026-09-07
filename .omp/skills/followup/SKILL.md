@@ -6,79 +6,65 @@ license: MIT
 
 # Follow-up Capture
 
-Trigger: `@@Phi: follow-up - <text>`. Everything after the hyphen is the
-follow-up body. Append it to the OMA follow-up register under a topic section
-and push the vault.
+Trigger: `@@Phi: follow-up - <text>`. Capture everything after the hyphen verbatim (trim whitespace only). Append to vault register under a topic section; push vault.
 
-Follow-ups are open investigation/implementation tasks — they are NOT tied to a
-specific oma-agent version. Group them by topic, not by release.
+Follow-ups are open tasks — NOT tied to a version. Group by topic, not release.
 
 ## Location
 
-- Register: `~/Work/git/oma-vault/projects/oh-my-pi-agents/follow-ups.md`
-- Vault repo: `Predator404/oma-vault.git`, branch `main`.
+`~/oma-registry/vault/projects/oh-my-pi-agents/follow-ups.md` — `Predator404/oma-vault.git`, branch `main`.
 
 ## Format
 
-Each follow-up is a `- [ ]` checklist item under a `## <topic>` heading.
-Topics group related items; create a new section when no existing topic fits.
-
 ```markdown
-## Agent UX
+## <Topic>
 
-- [ ] <captured follow-up text>
+- [ ] <text>
 ```
 
-Items are open (`[ ]`) by default. When resolved, mark `[x]`.
+`[ ]` by default; `[x]` when resolved.
 
 ## Workflow
 
-### 1. Extract the follow-up text
+### 1. Extract
 
-Parse the trigger: `@@Phi: follow-up - <text>`. Capture `<text>` verbatim
-(trim leading/trailing whitespace only).
+Parse trigger; capture `<text>` verbatim.
 
-### 2. Determine the topic
+### 2. Topic
 
-Infer a short topic name from the follow-up content. Examples:
+Infer from content:
 
-| Follow-up about… | Topic |
+| Content | Topic |
 |---|---|
-| Agent prompts, addressing, autocomplete, UX | `Agent UX` |
-| Daemon, workers, broker, spawn | `Daemon / workers` |
-| Vault, memory, embeddings, notes | `Vault & memory` |
-| CLI, commands, flags, output | `CLI` |
-| TUI, rendering, status line, colors | `TUI` |
+| Prompts, addressing, UX | `Agent UX` |
+| Daemon, workers, broker | `Daemon / workers` |
+| Vault, memory, notes | `Vault & memory` |
+| CLI, commands, flags | `CLI` |
+| TUI, rendering, colors | `TUI` |
 | Skills, tools, MCP | `Skills & tools` |
-| Build, compile, release, CI | `Build & release` |
+| Build, compile, release | `Build & release` |
 
-If no existing topic section fits, create a new `## <topic>` heading.
+No match → new `## <topic>` heading.
 
-### 3. Append the item
+### 3. Append
 
-Insert a new `- [ ] <text>` line under the topic section. If the section
-already has items, append after the last one.
+Insert `- [ ] <text>` under the topic section, after the last existing item.
 
-### 4. Commit and push the vault
+### 4. Commit and push
 
-```bash
-cd ~/Work/git/oma-vault
+```sh
+cd ~/oma-registry/vault
 git add projects/oh-my-pi-agents/follow-ups.md
-git commit -m "follow-up: <topic> — <brief summary>"
+git commit -m "follow-up: <topic> — <brief>"
 git push origin main
 ```
 
-- Stage ONLY the follow-ups file. Leave `.obsidian/` churn unstaged.
+Stage ONLY follow-ups.md — leave `.obsidian/` churn unstaged.
 
-## Gotchas
+## Rules
 
-- **NEVER tie follow-ups to oma-agent versions.** They are open tasks, not
-  release notes. Use topic sections.
-- **NEVER overwrite existing items.** Append only; existing `[x]` and `[ ]`
-  items are immutable history.
-- **One item per trigger.** Multiple follow-ups → multiple `@@Phi: follow-up -`
-  messages.
-- **Link deep threads.** If a follow-up needs more than a paragraph, create a
-  note under `investigations/` and link it from the item.
-- **Vault push is independent.** Failure to push the vault does not block the
-  conversation; surface the error and retry.
+- NEVER tie follow-ups to versions.
+- NEVER overwrite existing items — append only; `[ ]`/`[x]` are immutable history.
+- One item per trigger; multiple follow-ups → multiple `@@Phi: follow-up -` messages.
+- Deep thread → note under `investigations/`; link from item.
+- Vault push failure doesn't block conversation; surface error and retry.

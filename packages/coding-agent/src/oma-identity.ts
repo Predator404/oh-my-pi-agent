@@ -16,7 +16,7 @@ export const OMA_APP_NAME = "oma";
  * build forks. Bump on each OMA release; unrelated to omp's numbering so an
  * `oma/x.y.z` line is never mistaken for an upstream omp version.
  */
-export const OMA_VERSION = "0.9.1";
+export const OMA_VERSION = "0.10.0";
 
 /**
  * Environment marker the `oma.ts` shim sets so code far from the entry (e.g. the
