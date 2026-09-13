@@ -15,9 +15,16 @@
  */
 
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
-import type { EntityDiscoveryResult } from "../entity/loader";
-import type { CreateEntityFields, WriteEntityRecordResult } from "../entity/record-writer";
-import type { ResolvedEntityConfig } from "../entity/schema";
+import { parseFrontmatter } from "@oh-my-pi/pi-utils";
+import { YAML } from "bun";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import type { DiscoveryResult } from "../task/discovery";
+import { discoverAgents } from "../task/discovery";
+import type { AgentDefinition, ResolvedEntityConfig } from "../task/types";
+import { getEntityRegistryRoot, ENTITY_RECORDS_SUBDIR } from "../entity/registries";
+import { resolveEntityByName } from "../entity/resolve";
 import type { EntitySetupOptions, SetupReport } from "../entity/setup";
 import type {
 	EntityDaemonRestart,
@@ -146,18 +153,18 @@ export interface EntityCommand {
 export interface EntityCommandDeps {
 	write(text: string): void;
 	connectClient(): Promise<EntityRuntimeClient>;
-	discover(options: { registryRoot?: string; registry?: string }): Promise<EntityDiscoveryResult>;
+	discover(options: { registryRoot?: string; registry?: string }): Promise<DiscoveryResult>;
 	resolve(name: string, options: { registryRoot?: string; registry?: string }): Promise<ResolvedEntityConfig>;
 	createRecord(
 		name: string,
-		fields: CreateEntityFields,
+		fields: AgentDefinition,
 		options: { registryRoot?: string; registry?: string; force?: boolean },
-	): Promise<WriteEntityRecordResult>;
+	): Promise<{ ok: boolean; filePath: string }>;
 	updateRecord(
 		name: string,
 		updates: Array<{ key: string; value: string }>,
 		options: { registryRoot?: string; registry?: string },
-	): Promise<WriteEntityRecordResult>;
+	): Promise<{ ok: boolean; filePath: string }>;
 	runSetup(options: EntitySetupOptions): Promise<SetupReport>;
 	readStdin(): Promise<string>;
 	/**
@@ -282,19 +289,19 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 		case "roster":
 		case "list": {
 			const discovered = await deps.discover({ registry });
-			const errors = discovered.errors;
-			const entities = registry ? discovered.entities.filter(e => e.registry === registry) : discovered.entities;
+			const agents = registry
+				? discovered.agents.filter(e => e.registry === registry)
+				: discovered.agents;
 			if (json) {
-				emit(deps, true, { entities, errors }, "");
+				emit(deps, true, { agents, errors: [] }, "");
 				return;
 			}
-			if (entities.length === 0) deps.write("No entities defined.\n");
-			for (const e of entities) {
+			if (agents.length === 0) deps.write("No entities defined.\n");
+			for (const e of agents) {
 				deps.write(
-					`${e.name}  (${e.role})  @${e.registry ?? "—"}  ${e.model?.join(",") ?? "—"}  bank=${e.memory.bank}  §${e.vaultSection}\n`,
+					`${e.name}  (${e.role ?? "—"})  @${e.registry ?? "—"}  ${e.model?.join(",") ?? "—"}  bank=${e.memory?.bank ?? "—"}  §${e.vaultSection ?? "—"}\n`,
 				);
 			}
-			for (const err of errors) deps.write(`! ${err.filePath}: ${err.error}\n`);
 			return;
 		}
 		case "show": {
@@ -326,27 +333,26 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 			if (!systemPrompt) systemPrompt = (await deps.readStdin()).trim();
 			if (!systemPrompt)
 				throw new EntityCommandUsageError(`system prompt required (pass --prompt or pipe it on stdin)`);
-			const fields: CreateEntityFields = {
+			const fields: AgentDefinition = {
+				name,
+				source: "user",
 				role,
 				description,
 				systemPrompt,
 				icon: flags.icon,
-				color: flags.color,
+				color: flags.color as AgentDefinition["color"],
 				model: parseCsv(flags.model),
-				thinkingLevel: flags.thinking,
+				thinkingLevel: flags.thinking as AgentDefinition["thinkingLevel"],
 				tools: parseCsv(flags.tools),
 				autoloadSkills: parseCsv(flags.skills),
-				memory: { bank: flags.bank, autoRetain: flags.autoRetain },
+				memory: flags.bank
+					? { backend: "mnemopi", bank: flags.bank, autoRetain: flags.autoRetain ?? false }
+					: undefined,
 				vaultSection: flags.vaultSection,
 				hosting: flags.endpoint ? { modelEndpoint: flags.endpoint } : undefined,
 			};
 			const result = await deps.createRecord(name, fields, { registry, force: flags.force });
-			return emit(
-				deps,
-				json,
-				result,
-				`${result.created ? "Created" : "Overwrote"} entity "${result.name}" → ${result.filePath}`,
-			);
+			return emit(deps, json, result, `Created entity "${name}" → ${result.filePath}`);
 		}
 		case "config": {
 			const name = requireArg(args, 0, "name");
@@ -378,7 +384,7 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 				deps,
 				json,
 				{ ...result, updates },
-				`Updated "${result.name}" (${updates.map(u => u.key).join(", ")})`,
+				`Updated "${name}" (${updates.map(u => u.key).join(", ")})`,
 			);
 		}
 		case "setup": {
@@ -764,12 +770,10 @@ export const AGENT_RUNTIME_SERVICE = "agent-runtime";
 
 /** Real collaborators: broker-backed C4 client + registry loader/writer + setup. */
 export async function defaultEntityDeps(): Promise<EntityCommandDeps> {
-	const [{ AgentDaemonClient }, { daemonClientForGlobal }, loader, writer, setup, sessionPaths, sessionLoader] =
+	const [{ AgentDaemonClient }, { daemonClientForGlobal }, setup, sessionPaths, sessionLoader] =
 		await Promise.all([
 			import("../launch/agents/agent-daemon-client"),
 			import("../launch/client"),
-			import("../entity/loader"),
-			import("../entity/record-writer"),
 			import("../entity/setup"),
 			import("../launch/agents/entity-session-paths"),
 			import("../session/session-loader"),
@@ -777,10 +781,61 @@ export async function defaultEntityDeps(): Promise<EntityCommandDeps> {
 	return {
 		write: text => process.stdout.write(text),
 		connectClient: async () => new AgentDaemonClient(await daemonClientForGlobal(AGENT_RUNTIME_SERVICE)),
-		discover: options => loader.discoverEntities(options),
-		resolve: (name, options) => loader.resolveEntityConfig(name, options),
-		createRecord: (name, fields, options) => writer.createEntityRecord(name, fields, options),
-		updateRecord: (name, updates, options) => writer.updateEntityRecordFields(name, updates, options),
+		discover: async options => discoverAgents(process.cwd(), os.homedir()),
+		resolve: async (name, options) => {
+			const { agents } = await discoverAgents(process.cwd(), os.homedir());
+			return resolveEntityByName(agents, name);
+		},
+		createRecord: async (name, fields, options) => {
+			const root = options.registryRoot ?? getEntityRegistryRoot();
+			await fs.mkdir(path.join(root, ENTITY_RECORDS_SUBDIR), { recursive: true });
+			const filePath = path.join(root, ENTITY_RECORDS_SUBDIR, `${name}.md`);
+			const exists = await fs.access(filePath).then(() => true).catch(() => false);
+			if (exists && !options.force) {
+				throw new EntityCommandUsageError(
+					`Entity "${name}" already exists at ${filePath} (use --force to overwrite)`,
+				);
+			}
+			// Serialize AgentDefinition as YAML frontmatter + systemPrompt body
+			const fm: Record<string, unknown> = {};
+			fm.name = fields.name;
+			fm.description = fields.description;
+			if (fields.tools?.length) fm.tools = fields.tools;
+			if (fields.model?.length) fm.model = fields.model;
+			if (fields.thinkingLevel) fm.thinkingLevel = fields.thinkingLevel;
+			if (fields.autoloadSkills?.length) fm.autoloadSkills = fields.autoloadSkills;
+			if (fields.spawns) fm.spawns = fields.spawns;
+			if (fields.output !== undefined) fm.output = fields.output;
+			if (fields.blocking !== undefined) fm.blocking = fields.blocking;
+			if (fields.readSummarize !== undefined) fm.readSummarize = fields.readSummarize;
+			if (fields.prewalk !== undefined) fm.prewalk = fields.prewalk;
+			if (fields.advisor !== undefined) fm.advisor = fields.advisor;
+			if (fields.role) fm.role = fields.role;
+			if (fields.icon) fm.icon = fields.icon;
+			if (fields.color) fm.color = fields.color;
+			if (fields.memory) fm.memory = fields.memory;
+			if (fields.vaultSection) fm.vaultSection = fields.vaultSection;
+			if (fields.registry) fm.registry = fields.registry;
+			if (fields.watchdog) fm.watchdog = fields.watchdog;
+			if (fields.hosting) fm.hosting = fields.hosting;
+			const yaml = YAML.stringify(fm, null, 2);
+			const content = `---\n${yaml}---\n${fields.systemPrompt}\n`;
+			await fs.writeFile(filePath, content, "utf8");
+			return { ok: true, filePath };
+		},
+		updateRecord: async (name, updates, options) => {
+			const root = options.registryRoot ?? getEntityRegistryRoot();
+			const filePath = path.join(root, ENTITY_RECORDS_SUBDIR, `${name}.md`);
+			const raw = await fs.readFile(filePath, "utf8");
+			const { frontmatter, body } = parseFrontmatter(raw, { location: filePath, level: "warn" });
+			for (const { key, value } of updates) {
+				frontmatter[key] = value;
+			}
+			const yaml = YAML.stringify(frontmatter, null, 2);
+			const content = `---\n${yaml}---\n${body}\n`;
+			await fs.writeFile(filePath, content, "utf8");
+			return { ok: true, filePath };
+		},
 		runSetup: options => setup.runEntitySetup(options),
 		readStdin: async () => {
 			if (process.stdin.isTTY) return "";

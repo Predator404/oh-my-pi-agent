@@ -8,8 +8,6 @@
  *
  * Registered as a per-entity stdio MCP server (see {@link vaultMcpServerConfig}).
  */
-import { TransformersEmbedder } from "./embedder";
-import { loadSmartConnectionsStore } from "./store";
 import { getToolDefinitions, handleToolCall, type ToolArguments, type ToolDefinition } from "./tools";
 import { type ReadonlyRoot, resolveVaultRoot, VaultBridge } from "./vault";
 
@@ -155,28 +153,12 @@ export function bridgeFromArgv(argv: readonly string[]): VaultBridge {
 	return new VaultBridge({ vaultRoot: resolveVaultRoot(vault), section, homeId, readable });
 }
 
-/**
- * Prefetch the vault's embedding model into the local cache, then exit. This is
- * the deterministic, network-using warm step (`omp-vault-mcp --warm-cache`) that
- * WS7a's filesystem-only setup deliberately does not perform. It embeds a probe
- * string with the model recorded in the vault's Smart Connections store (default
- * bge-micro-v2), forcing the one-time download so later searches run offline.
- */
-export async function warmCache(argv: readonly string[], log: WritableOutput = Bun.stdout): Promise<void> {
-	let vault: string | undefined;
-	for (let i = 0; i < argv.length; i++) {
-		if (argv[i] === "--vault") vault = argv[++i];
-	}
-	const vaultRoot = resolveVaultRoot(vault);
-	const store = loadSmartConnectionsStore(vaultRoot);
-	const embedder = new TransformersEmbedder(store.model.modelKey, { offline: false });
-	log.write(`Warming embedding model '${store.model.modelKey}' for vault ${vaultRoot} …\n`);
-	await embedder.embed("vault embedding model warm-up probe");
-	log.write(`Done. Model cached; searches can now run offline (set OMP_VAULT_EMBED_OFFLINE=1).\n`);
-}
-
 export function main(argv: readonly string[] = Bun.argv.slice(2)): Promise<void> {
-	if (argv.includes("--warm-cache")) return warmCache(argv);
+	// --warm-cache is a no-op: embeddings are now delegated to mnemopi.
+	if (argv.includes("--warm-cache")) {
+		Bun.stdout.write("warm-cache: embeddings are delegated to mnemopi; nothing to warm.\n");
+		return Promise.resolve();
+	}
 	return runStdio(bridgeFromArgv(argv));
 }
 

@@ -30,7 +30,8 @@
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { type ResolveEntityOptions, resolveEntityConfig } from "../entity/loader";
+import { resolveEntityByName } from "../entity/resolve";
+import { discoverAgents } from "../task/discovery";
 import { SKILL_RESOLVE_IMPORTS_FIELD } from "../extensibility/skills";
 
 /** Vault subtree that holds per-project notes (SPEC §4.3 / §7.3). */
@@ -193,7 +194,9 @@ export async function generateProjectPointer(
 	};
 }
 
-export interface GenerateProjectPointerForEntityOptions extends ResolveEntityOptions {
+export interface GenerateProjectPointerForEntityOptions {
+	/** Working directory for agent discovery (passed to `discoverAgents`). */
+	cwd: string;
 	/** Project repo root the stub is written into. */
 	projectDir: string;
 	/** Registry entity name to resolve (C1). */
@@ -212,7 +215,8 @@ export interface GenerateProjectPointerForEntityOptions extends ResolveEntityOpt
 export async function generateProjectPointerForEntity(
 	opts: GenerateProjectPointerForEntityOptions,
 ): Promise<GenerateProjectPointerResult> {
-	const config = await resolveEntityConfig(opts.entityName, { registryRoot: opts.registryRoot });
+	const { agents } = await discoverAgents(opts.cwd);
+	const config = resolveEntityByName(agents, opts.entityName);
 	const persona = personaFromVaultSection(config.vaultSection);
 	return generateProjectPointer({
 		projectDir: opts.projectDir,

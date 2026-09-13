@@ -45,7 +45,7 @@ import { handleToolCall as memHandle, RetentionPolicyError } from "@oh-my-pi/pi-
 // --- WS6 project pointer -----------------------------------------------------
 import { generateProjectPointerForEntity, projectPointerImport } from "@oh-my-pi/pi-coding-agent/project-pointer";
 // --- WS4 vault MCP (C3) ------------------------------------------------------
-import { type Embedder, VaultBridge, handleToolCall as vaultHandle } from "@oh-my-pi/pi-coding-agent/vault-mcp";
+import { VaultBridge, handleToolCall as vaultHandle } from "@oh-my-pi/pi-coding-agent/vault-mcp";
 import { AgentSupervisor, type ClientChannel, type WorkerSpawner } from "../agent-supervisor";
 import { AgentWorker, type WorkerScheduling } from "../agent-worker";
 import { buildEntityMcpManager } from "../agent-worker-main";
@@ -256,66 +256,21 @@ describe("(c) WS3 memory — retention policy + bank-scoped recall", () => {
 
 // ===========================================================================
 // (d) WS4 — section-scoped write_note + search_notes round-trip, no leak.
-// The Smart Connections embedding index is external, so we seed one .smart-env
-// entry per section (fake embedder, no model, no network); the write and the
-// read both hit the real files through the real bridge + tool dispatch.
+// Text-grep search over the written vault files; no embeddings or network.
 // ===========================================================================
 
-const MODEL_KEY = "TaylorAI/bge-micro-v2";
 const ATLAS_NOTE = "## Estuary\nkingfisher migration timing over the estuary\n";
 const PHI_NOTE = "## Sourdough\nsourdough fermentation timing at altitude\n";
 
-class FakeEmbedder implements Embedder {
-	readonly modelKey = MODEL_KEY;
-	readonly dimensions = 4;
-	async embed(text: string): Promise<number[]> {
-		const t = text.toLowerCase();
-		if (t.includes("estuary") || t.includes("kingfisher")) return [1, 0, 0, 0];
-		if (t.includes("sourdough")) return [0, 1, 0, 0];
-		return [0, 0, 0, 1];
-	}
-}
-
-function seedSmartEnv(): void {
-	const vec = (v: number[]) => ({ embeddings: { [MODEL_KEY]: { vec: v } } });
-	const entries: Record<string, unknown> = {
-		[`smart_sources:${AGENT_SECTION}/lessons.md`]: {
-			...vec([1, 0, 0, 0]),
-			blocks: { "#Estuary": { lines: [1, 2] } },
-		},
-		[`smart_blocks:${AGENT_SECTION}/lessons.md#Estuary`]: vec([1, 0, 0, 0]),
-		[`smart_sources:${PERSONA_SECTION}/lessons.md`]: {
-			...vec([0, 1, 0, 0]),
-			blocks: { "#Sourdough": { lines: [1, 2] } },
-		},
-		[`smart_blocks:${PERSONA_SECTION}/lessons.md#Sourdough`]: vec([0, 1, 0, 0]),
-	};
-	const envDir = path.join(vaultLocation, ".smart-env");
-	fs.mkdirSync(path.join(envDir, "multi"), { recursive: true });
-	fs.writeFileSync(
-		path.join(envDir, "smart_env.json"),
-		JSON.stringify({ smart_sources: { embed_model: { transformers: { model_key: MODEL_KEY } } } }),
-	);
-	fs.writeFileSync(
-		path.join(envDir, "multi", "all.ajson"),
-		Object.entries(entries)
-			.map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`)
-			.join(",\n"),
-	);
-}
-
 describe("(d) WS4 vault — section-scoped write + search, no cross-section leak", () => {
 	test("write_note lands in the owning section; search_notes returns it, scoped", async () => {
-		seedSmartEnv();
 		const atlasBridge = new VaultBridge({
 			vaultRoot: vaultLocation,
 			section: AGENT_SECTION,
-			embedder: new FakeEmbedder(),
 		});
 		const phiBridge = new VaultBridge({
 			vaultRoot: vaultLocation,
 			section: PERSONA_SECTION,
-			embedder: new FakeEmbedder(),
 		});
 
 		// Each entity writes into its own section via the C3 write_note tool.
@@ -327,7 +282,7 @@ describe("(d) WS4 vault — section-scoped write + search, no cross-section leak
 
 		// search_notes scoped to the atlas section returns the atlas block only,
 		// with text read back from the file just written (a real round-trip).
-		const atlasSearch = await vaultHandle(atlasBridge, "search_notes", { query: "tell me about the estuary" });
+		const atlasSearch = await vaultHandle(atlasBridge, "search_notes", { query: "estuary kingfisher migration" });
 		const atlasHits = atlasSearch.hits as { file: string; text: string }[];
 		expect(atlasHits.length).toBeGreaterThan(0);
 		expect(atlasHits[0].file).toBe(`${AGENT_SECTION}/lessons.md`);
@@ -339,7 +294,7 @@ describe("(d) WS4 vault — section-scoped write + search, no cross-section leak
 		for (const h of leakProbe.hits as { file: string }[]) expect(h.file.startsWith(`${AGENT_SECTION}/`)).toBe(true);
 
 		// And phi's own section resolves phi's note.
-		const phiSearch = await vaultHandle(phiBridge, "search_notes", { query: "sourdough at altitude" });
+		const phiSearch = await vaultHandle(phiBridge, "search_notes", { query: "sourdough altitude fermentation" });
 		const phiHits = phiSearch.hits as { file: string; text: string }[];
 		expect(phiHits.length).toBeGreaterThan(0);
 		expect(phiHits.every(h => h.file.startsWith(`${PERSONA_SECTION}/`))).toBe(true);
@@ -598,12 +553,14 @@ describe("(f) WS6 project pointer — @-import resolves through ~/vault", () => 
 		// WS7 CLI seam: generate the stub for the entity, persona derived from C1.
 		const projectDir = path.join(root, "project-repo");
 		await fsp.mkdir(projectDir, { recursive: true });
+		process.env.OMP_ENTITY_REGISTRY = registryRoot;
 		const stub = await generateProjectPointerForEntity({
+			cwd: root,
 			entityName: PERSONA_NAME,
 			projectDir,
 			project: PROJECT,
-			registryRoot,
 		});
+		delete process.env.OMP_ENTITY_REGISTRY;
 		expect(stub.content).toContain(projectPointerImport(PROJECT, PERSONA_NAME));
 
 		// The stub body is a pointer only — no content copied into the repo.

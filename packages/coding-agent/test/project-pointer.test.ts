@@ -132,12 +132,14 @@ describe("generateProjectPointerForEntity — resolves persona from C1 vaultSect
 		const projectDir = path.join(tmp, "consumer-repo");
 		await fs.mkdir(projectDir, { recursive: true });
 
+		process.env.OMP_ENTITY_REGISTRY = registryRoot;
 		const result = await generateProjectPointerForEntity({
+			cwd: tmp,
 			projectDir,
 			entityName: "phi",
-			registryRoot,
 			project: "oh-my-pi",
 		});
+		delete process.env.OMP_ENTITY_REGISTRY;
 		expect(result.persona).toBe("phi");
 		expect(result.skillName).toBe("phi-project");
 		expect(result.content).toContain("@~/vault/projects/oh-my-pi/phi.md");
