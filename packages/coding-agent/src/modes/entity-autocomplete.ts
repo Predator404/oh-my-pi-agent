@@ -17,7 +17,8 @@
  * items replace the live `@`-run with the item's final value).
  */
 import type { AutocompleteItem } from "@oh-my-pi/pi-tui";
-import { discoverEntities, type EntityRecordMeta } from "../entity";
+import { discoverAgents } from "../task/discovery";
+import type { AgentDefinition } from "../task/types";
 
 /** A whitespace-anchored `@`-run token ending at the cursor. */
 export interface EntityMention {
@@ -33,18 +34,17 @@ const MAX_ENTITY_SUGGESTIONS = 12;
 const ENTITY_CACHE_TTL_MS = 5_000;
 
 /** Registry scans hit disk; a short TTL keeps per-keystroke lookups allocation-cheap. */
-let entityCache: { at: number; entities: EntityRecordMeta[] } | undefined;
+let entityCache: { at: number; entities: AgentDefinition[] } | undefined;
 
-async function loadEntities(): Promise<EntityRecordMeta[]> {
+async function loadEntities(): Promise<AgentDefinition[]> {
 	const now = Date.now();
 	if (entityCache && now - entityCache.at < ENTITY_CACHE_TTL_MS) return entityCache.entities;
 	try {
-		const { entities } = await discoverEntities();
-		entityCache = { at: now, entities };
-		return entities;
+		const { agents } = await discoverAgents(process.cwd());
+		const entityAgents = agents.filter(a => a.role);
+		entityCache = { at: now, entities: entityAgents };
+		return entityAgents;
 	} catch {
-		// No registry (or an unreadable one) means no entities to offer; cache the
-		// empty result so a missing registry does not re-scan on every keystroke.
 		entityCache = { at: now, entities: [] };
 		return [];
 	}
@@ -76,7 +76,7 @@ function fuzzyScore(query: string, target: string): number {
 }
 
 /** Score an entity against the query, preferring name matches over description matches. */
-function scoreEntity(query: string, entity: EntityRecordMeta): number {
+function scoreEntity(query: string, entity: AgentDefinition): number {
 	if (query.length === 0) return 1;
 	const nameScore = fuzzyScore(query, entity.name.toLowerCase());
 	if (nameScore > 0) return nameScore;

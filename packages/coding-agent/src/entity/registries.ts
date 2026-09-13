@@ -61,8 +61,8 @@ export interface RegistryAccess {
 /** Env var pointing at the registries manifest JSON. */
 export const REGISTRY_MANIFEST_ENV = "OMP_REGISTRIES";
 
-/** Env var for the legacy single entity-registry root (pre-ADR-0004 fallback). */
-const LEGACY_REGISTRY_ENV = "OMP_ENTITY_REGISTRY";
+/** Environment variable that overrides the default entity-registry root. */
+export const ENTITY_REGISTRY_ENV = "OMP_ENTITY_REGISTRY";
 
 /** Manifest filename under the agent dir when neither explicit path nor env is set. */
 export const REGISTRY_MANIFEST_FILENAME = "registries.json";
@@ -123,7 +123,7 @@ export function getRegistryManifestPath(explicit?: string): string {
 
 /** Legacy single-registry root: `OMP_ENTITY_REGISTRY` env, else `<agentDir>/registry`. */
 function legacyRegistryRoot(): string {
-	const env = process.env[LEGACY_REGISTRY_ENV]?.trim();
+	const env = process.env[ENTITY_REGISTRY_ENV]?.trim();
 	if (env) return path.resolve(expandHome(env));
 	return path.join(getAgentDir(), "registry");
 }
@@ -276,4 +276,69 @@ export function resolveRegistryAccess(manifest: RegistryManifest, homeId: string
 /** The ids visible to an entity homed at `homeId`: home ∪ readable set (Q12). */
 export function visibleRegistryIds(manifest: RegistryManifest, homeId: string): string[] {
 	return resolveRegistryAccess(manifest, homeId).map(a => a.id);
+}
+
+// ── Entity registry root resolution (moved from loader.ts) ──────────
+
+/** Directory under the registry root holding one Markdown record per entity. */
+export const ENTITY_RECORDS_SUBDIR = "entities";
+
+/**
+ * Filesystem-/id-safe entity name. Enforced at load so WS1 can hash the name
+ * into session-lease and scheduled-job artifact paths without escaping.
+ */
+export const ENTITY_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
+
+/** A schema or policy violation in an entity record. */
+export class EntityValidationError extends Error {
+	constructor(
+		message: string,
+		readonly filePath?: string,
+	) {
+		super(filePath ? `${message} (${filePath})` : message);
+		this.name = "EntityValidationError";
+	}
+}
+
+/** No record exists for the requested entity name. */
+export class EntityNotFoundError extends Error {
+	constructor(
+		readonly entityName: string,
+		readonly filePath: string,
+	) {
+		super(`No entity record for "${entityName}" (looked in ${filePath})`);
+		this.name = "EntityNotFoundError";
+	}
+}
+
+/** A non-fatal load error for one entity record during roster discovery. */
+export interface EntityLoadError {
+	filePath: string;
+	error: string;
+}
+
+/** Options shared by the registry entry points. */
+export interface EntityRegistryOptions {
+	/** Explicit registry root; overrides the manifest and scans just that one root (legacy single-registry). */
+	registryRoot?: string;
+	/** Preloaded registries manifest; else loaded from the manifest path/env/default (ADR 0004). */
+	manifest?: RegistryManifest;
+	/** Explicit manifest path (used only when `manifest` is not supplied and no `registryRoot`). */
+	manifestPath?: string;
+}
+
+/**
+ * Resolve the entity-registry root: explicit option, else the
+ * `OMP_ENTITY_REGISTRY` env var, else `<agentDir>/registry`. WS7 setup wires
+ * the default location to the repo-2 checkout (symlink or env var).
+ */
+export function getEntityRegistryRoot(options: EntityRegistryOptions = {}): string {
+	if (options.registryRoot?.trim()) {
+		return path.resolve(options.registryRoot.trim());
+	}
+	const env = process.env[ENTITY_REGISTRY_ENV];
+	if (env?.trim()) {
+		return path.resolve(env.trim());
+	}
+	return path.join(getAgentDir(), "registry");
 }

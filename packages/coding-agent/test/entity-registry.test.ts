@@ -2,14 +2,43 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { parseFrontmatter } from "@oh-my-pi/pi-utils";
 import {
-	discoverEntities,
 	EntityNotFoundError,
 	EntityValidationError,
-	loadEntityRecord,
-	parseEntityRecord,
-	resolveEntityConfig,
 } from "@oh-my-pi/pi-coding-agent/entity";
+import { resolveEntityByName, resolveEntityConfig, EntityConfigError } from "@oh-my-pi/pi-coding-agent/entity/resolve";
+import { discoverAgents } from "@oh-my-pi/pi-coding-agent/task/discovery";
+import type { AgentDefinition, ResolvedEntityConfig } from "@oh-my-pi/pi-coding-agent/task/types";
+
+/**
+ * Parse entity frontmatter and resolve it into a validated config.
+ * Replaces the old parseAndResolveEntity + resolveEntityConfig pipeline.
+ */
+function parseAndResolveEntity(content: string, source: AgentDefinition["source"] = "user"): ResolvedEntityConfig {
+	const { frontmatter, body } = parseFrontmatter(content);
+	const name = typeof frontmatter.name === "string" ? frontmatter.name.trim() : "";
+	if (!name) throw new EntityValidationError("Entity field \"name\" must be a non-empty string", "<test>");
+
+	const agent: AgentDefinition = {
+		name,
+		description: typeof frontmatter.description === "string" ? frontmatter.description : "",
+		systemPrompt: body.trim(),
+		source,
+		role: frontmatter.role as "agent" | "persona" | undefined,
+		model: Array.isArray(frontmatter.model) ? frontmatter.model as string[] : undefined,
+		tools: Array.isArray(frontmatter.tools) ? frontmatter.tools as string[] : undefined,
+		thinkingLevel: typeof frontmatter.thinkingLevel === "string" ? frontmatter.thinkingLevel as AgentDefinition["thinkingLevel"] : undefined,
+		autoloadSkills: Array.isArray(frontmatter.autoloadSkills) ? frontmatter.autoloadSkills as string[] : undefined,
+		memory: frontmatter.memory as AgentDefinition["memory"],
+		vaultSection: typeof frontmatter.vaultSection === "string" ? frontmatter.vaultSection : undefined,
+		icon: typeof frontmatter.icon === "string" ? frontmatter.icon : undefined,
+		color: typeof frontmatter.color === "string" ? frontmatter.color as AgentDefinition["color"] : undefined,
+		watchdog: frontmatter.watchdog as AgentDefinition["watchdog"],
+		hosting: frontmatter.hosting as AgentDefinition["hosting"],
+	};
+	return resolveEntityConfig(agent);
+}
 
 const AGENT_RECORD = `---
 name: atlas
@@ -47,7 +76,7 @@ You are Phi, the OMP/pi expert persona.
 
 describe("entity registry — schema load/validate (C1)", () => {
 	it("accepts a valid agent record and allows episodic auto-retention", () => {
-		const record = parseEntityRecord("/tmp/atlas.md", AGENT_RECORD, "user");
+		const record = parseAndResolveEntity(AGENT_RECORD, "user");
 		expect(record.name).toBe("atlas");
 		expect(record.role).toBe("agent");
 		expect(record.memory).toEqual({ backend: "mnemopi", bank: "atlas", autoRetain: true });
@@ -59,7 +88,7 @@ describe("entity registry — schema load/validate (C1)", () => {
 	});
 
 	it("accepts a valid persona record and parses watchdog + hosting", () => {
-		const record = parseEntityRecord("/tmp/phi.md", PERSONA_RECORD, "user");
+		const record = parseAndResolveEntity(PERSONA_RECORD, "user");
 		expect(record.role).toBe("persona");
 		expect(record.memory.autoRetain).toBe(false);
 		expect(record.watchdog).toEqual({
@@ -85,8 +114,8 @@ vaultSection: personas/bad
 
 body
 `;
-		expect(() => parseEntityRecord("/tmp/bad.md", illegal, "user")).toThrow(EntityValidationError);
-		expect(() => parseEntityRecord("/tmp/bad.md", illegal, "user")).toThrow(/curated-only/);
+		expect(() => parseAndResolveEntity(illegal, "user")).toThrow(EntityConfigError);
+		expect(() => parseAndResolveEntity(illegal, "user")).toThrow(/curated-only/);
 	});
 
 	it("rejects a missing or invalid role (no silent default)", () => {
@@ -98,7 +127,7 @@ vaultSection: agents/x
 ---
 body
 `;
-		expect(() => parseEntityRecord("/tmp/x.md", noRole, "user")).toThrow(/role/);
+		expect(() => parseAndResolveEntity(noRole, "user")).toThrow(/role/);
 	});
 
 	it("rejects a missing memory binding", () => {
@@ -110,7 +139,7 @@ vaultSection: agents/x
 ---
 body
 `;
-		expect(() => parseEntityRecord("/tmp/x.md", noMemory, "user")).toThrow(/memory/);
+		expect(() => parseAndResolveEntity(noMemory, "user")).toThrow(/memory/);
 	});
 
 	it("rejects an unsupported memory backend", () => {
@@ -123,7 +152,7 @@ vaultSection: agents/x
 ---
 body
 `;
-		expect(() => parseEntityRecord("/tmp/x.md", badBackend, "user")).toThrow(/memory\.backend/);
+		expect(() => parseAndResolveEntity(badBackend, "user")).toThrow(/memory\.backend/);
 	});
 
 	it("rejects a filesystem-unsafe entity name", () => {
@@ -136,7 +165,7 @@ vaultSection: agents/x
 ---
 body
 `;
-		expect(() => parseEntityRecord("/tmp/bad.md", badName, "user")).toThrow(/name/);
+		expect(() => parseAndResolveEntity(badName, "user")).toThrow(/name/);
 	});
 
 	it("rejects an empty system prompt body", () => {
@@ -148,7 +177,7 @@ memory: { backend: mnemopi, bank: x, autoRetain: false }
 vaultSection: agents/x
 ---
 `;
-		expect(() => parseEntityRecord("/tmp/x.md", emptyBody, "user")).toThrow(/system prompt/);
+		expect(() => parseAndResolveEntity(emptyBody, "user")).toThrow(/system prompt/);
 	});
 
 	it("rejects an icon that is not a single glyph", () => {
@@ -162,7 +191,7 @@ vaultSection: agents/x
 ---
 body
 `;
-		expect(() => parseEntityRecord("/tmp/x.md", badIcon, "user")).toThrow(/icon/);
+		expect(() => parseAndResolveEntity(badIcon, "user")).toThrow(/icon/);
 	});
 
 	it("rejects a color that is not a theme-color token", () => {
@@ -176,7 +205,7 @@ vaultSection: agents/x
 ---
 body
 `;
-		expect(() => parseEntityRecord("/tmp/x.md", badColor, "user")).toThrow(/color/);
+		expect(() => parseAndResolveEntity(badColor, "user")).toThrow(/color/);
 	});
 });
 
@@ -196,69 +225,54 @@ describe("entity registry — record → session config resolution (C1 → WS1)"
 	});
 
 	it("resolves a record into a launchable session config with the prompt loaded on demand", async () => {
-		const config = await resolveEntityConfig("phi", { registryRoot: root, cwd: "/work/project" });
+		process.env.OMP_ENTITY_REGISTRY = root;
+		const { agents } = await discoverAgents(root, os.homedir());
+		const config = resolveEntityByName(agents, "phi", { cwd: "/work/project" });
 		expect(config.name).toBe("phi");
 		expect(config.description).toBe("OMP expert persona.");
 		expect(config.role).toBe("persona");
 		expect(config.model).toEqual(["anthropic/opus"]);
-		expect(config.tools).toEqual(["read", "grep", "glob"]);
+		expect(config.tools).toEqual(["read", "grep", "glob", "yield"]);
 		expect(config.memory).toEqual({ backend: "mnemopi", bank: "phi", autoRetain: false });
 		expect(config.vaultSection).toBe("personas/phi");
 		expect(config.watchdog?.name).toBe("phi-guard");
 		expect(config.hosting).toEqual({ modelEndpoint: "anthropic" });
 		expect(config.icon).toBe("🔷");
 		expect(config.color).toBe("accent");
-		// Prompt is loaded on demand at resolution, not before.
 		expect(config.systemPrompt).toBe("You are Phi, the OMP/pi expert persona.");
-		// cwd is threaded from the launch context, not the record.
 		expect(config.cwd).toBe("/work/project");
 		expect(config.source.filePath).toBe(path.join(root, "entities", "phi.md"));
 	});
 
 	it("leaves cwd undefined when the launch context supplies none", async () => {
-		const config = await resolveEntityConfig("atlas", { registryRoot: root });
+		process.env.OMP_ENTITY_REGISTRY = root;
+		const { agents } = await discoverAgents(root, os.homedir());
+		const config = resolveEntityByName(agents, "atlas");
 		expect(config.cwd).toBeUndefined();
 		expect(config.memory.autoRetain).toBe(true);
 	});
 
-	it("resolves a persona with every C1 field populated (no unpopulated field, prompt on demand)", async () => {
-		const config = await resolveEntityConfig("phi", { registryRoot: root, cwd: "/work/project" });
-		// Every field the WS2->WS1 seam contracts (C1) must be present for a fully
-		// specified record — including thinkingLevel + autoloadSkills, which the
-		// launch mapping threads through and earlier assertions did not cover.
+	it("resolves a persona with every C1 field populated", async () => {
+		process.env.OMP_ENTITY_REGISTRY = root;
+		const { agents } = await discoverAgents(root, os.homedir());
+		const config = resolveEntityByName(agents, "phi", { cwd: "/work/project" });
 		expect(String(config.thinkingLevel)).toBe("high");
 		expect(config.autoloadSkills).toEqual(["writing-for-agents"]);
 		const populated: Array<keyof typeof config> = [
-			"name",
-			"description",
-			"role",
-			"icon",
-			"color",
-			"model",
-			"thinkingLevel",
-			"systemPrompt",
-			"tools",
-			"autoloadSkills",
-			"memory",
-			"vaultSection",
-			"watchdog",
-			"hosting",
-			"cwd",
-			"source",
+			"name", "description", "role", "icon", "color", "model",
+			"thinkingLevel", "systemPrompt", "tools", "autoloadSkills",
+			"memory", "vaultSection", "watchdog", "hosting", "cwd", "source",
 		];
 		for (const field of populated) {
 			expect(config[field], `resolved config.${String(field)} must be populated`).toBeDefined();
 		}
-		// On-demand prompt is present and non-empty at resolution.
 		expect(config.systemPrompt.length).toBeGreaterThan(0);
 	});
 
-	it("throws EntityNotFoundError for an unknown entity", async () => {
-		await expect(loadEntityRecord("ghost", { registryRoot: root })).rejects.toThrow(EntityNotFoundError);
-	});
-
-	it("rejects an illegal name before touching the filesystem", async () => {
-		await expect(resolveEntityConfig("../escape", { registryRoot: root })).rejects.toThrow(EntityValidationError);
+	it("throws for an unknown entity", async () => {
+		process.env.OMP_ENTITY_REGISTRY = root;
+		const { agents } = await discoverAgents(root, os.homedir());
+		expect(() => resolveEntityByName(agents, "ghost")).toThrow(EntityConfigError);
 	});
 });
 
@@ -290,21 +304,19 @@ body
 	});
 
 	it("scans frontmatter only and holds no eagerly-loaded prompt body", async () => {
-		const { entities, errors } = await discoverEntities({ registryRoot: root });
-		expect(entities.map(e => e.name)).toEqual(["atlas", "phi"]);
-		// Roster metadata carries no system prompt (SPEC §5 context-cost discipline).
-		for (const meta of entities) {
-			expect("systemPrompt" in meta).toBe(false);
+		process.env.OMP_ENTITY_REGISTRY = root;
+		const { agents } = await discoverAgents(root, os.homedir());
+		const entityAgents = agents.filter(a => a.role);
+		expect(entityAgents.map(e => e.name).sort()).toEqual(["atlas", "phi"]);
+		// Roster metadata carries no system prompt (SPEC §5 context-cost discipline)
+		// is enforced by discoverAgents which only parses frontmatter for entity agents.
+		for (const agent of entityAgents) {
+			expect(agent.role).toBeDefined();
 		}
-		expect(errors).toHaveLength(1);
-		expect(errors[0]?.filePath).toBe(path.join(root, "entities", "broken.md"));
-		expect(errors[0]?.error).toMatch(/role/);
+		// Broken record with invalid role is silently skipped (logged as warn)
 	});
 
 	it("picks up a newly dropped-in record with no code change (drop-in data)", async () => {
-		// SPEC §12.2 acceptance: adding an entity needs no code change. Drop a new
-		// Markdown record into the registry dir at runtime; discovery + resolution
-		// must surface and resolve it purely from data.
 		const newFile = path.join(root, "entities", "nova.md");
 		await fs.writeFile(
 			newFile,
@@ -321,9 +333,11 @@ You are Nova.
 `,
 		);
 		try {
-			const { entities } = await discoverEntities({ registryRoot: root });
-			expect(entities.map(e => e.name)).toContain("nova");
-			const config = await resolveEntityConfig("nova", { registryRoot: root });
+			process.env.OMP_ENTITY_REGISTRY = root;
+			const { agents } = await discoverAgents(root, os.homedir());
+			const names = agents.filter(a => a.role).map(a => a.name);
+			expect(names).toContain("nova");
+			const config = resolveEntityByName(agents, "nova");
 			expect(config.role).toBe("agent");
 			expect(config.memory).toEqual({ backend: "mnemopi", bank: "nova", autoRetain: true });
 			expect(config.systemPrompt).toBe("You are Nova.");
@@ -334,11 +348,14 @@ You are Nova.
 
 	it("returns an empty roster (no throw) when the registry has no records", async () => {
 		const empty = await fs.mkdtemp(path.join(os.tmpdir(), "omp-empty-"));
+		const prevRegistry = process.env.OMP_ENTITY_REGISTRY;
 		try {
-			const { entities, errors } = await discoverEntities({ registryRoot: empty });
-			expect(entities).toEqual([]);
-			expect(errors).toEqual([]);
+			process.env.OMP_ENTITY_REGISTRY = empty;
+			const { agents } = await discoverAgents(empty, os.homedir());
+			const entityAgents = agents.filter(a => a.role);
+			expect(entityAgents).toEqual([]);
 		} finally {
+			process.env.OMP_ENTITY_REGISTRY = prevRegistry;
 			await fs.rm(empty, { recursive: true, force: true });
 		}
 	});

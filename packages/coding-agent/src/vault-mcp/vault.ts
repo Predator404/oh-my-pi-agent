@@ -5,25 +5,24 @@
  * section, a C1 record's `vaultSection`, e.g. `agents/phi`) and zero or more
  * READ-ONLY registry roots, each tagged by registry id (ADR 0004). It exposes
  * the four C3 primitives:
- *   - {@link searchNotes}     hybrid semantic search → block-level hits, scoped.
+ *   - {@link searchNotes}     text-grep search over vault markdown, scoped.
  *   - {@link getNote}         read a note's markdown.
  *   - {@link writeNote}       plain-file write into the correct section (home).
- *   - {@link getConnections}  wikilink/backlink traversal (+ vector neighbors).
+ *   - {@link getConnections}  wikilink/backlink traversal via regex scan.
  *
+ * Embedding and vector search are delegated to mnemopi (BeamMemory.recall) when
+ * available; the bridge's built-in fallback is a plain text-grep of markdown
+ * files. Wikilink resolution uses a regex scan of `[[wikilink]]` syntax; the
+ * vault:// protocol handler (Obsidian CLI) is the preferred path when available.
  * Reads target the home root by default; a `registry` id selects a read-only
  * root. Writes ALWAYS target home. Each root is confined by the same path-jail
- * (no `..` escape, no symlink break-out) and has its own Smart Connections
- * store, loaded lazily. Nothing here contacts the network: semantic ranking
- * reads the local store and embeds the query with an on-device model.
+ * (no `..` escape, no symlink break-out). Nothing here contacts the network.
  */
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { cosineSimilarity, type Embedder, TransformersEmbedder } from "./embedder";
-import { VaultGraph } from "./graph";
-import { type EmbeddingEntry, loadSmartConnectionsStore, type SmartConnectionsStore } from "./store";
 
-/** A block-level semantic search hit. */
+/** A block-level search hit. */
 export interface NoteHit {
 	/** Store key: `<file>` or `<file>#<breadcrumb>`. */
 	key: string;
@@ -31,7 +30,7 @@ export interface NoteHit {
 	file: string;
 	/** Heading breadcrumb for a block hit. */
 	heading?: string;
-	/** Cosine similarity to the query (0..1). */
+	/** Relevance score (0..1). */
 	score: number;
 	/** Line range in the note, when known. */
 	lines?: [number, number];
@@ -46,7 +45,7 @@ export interface Connections {
 	file: string;
 	linksOut: { target: string; resolved?: string; heading?: string }[];
 	linksIn: { source: string }[];
-	/** Semantically-nearest OTHER notes (vector neighbors of this note). */
+	/** Semantically-nearest OTHER notes (empty when embeddings unavailable). */
 	relatedByVector: { file: string; score: number }[];
 }
 
@@ -64,8 +63,6 @@ export interface VaultBridgeOptions {
 	vaultRoot: string;
 	/** Owning section (vault-relative), default scope for search/write on home. */
 	section?: string;
-	/** Injected embedder; defaults to on-device {@link TransformersEmbedder}. */
-	embedder?: Embedder;
 	/** Home registry id (default `oma`); the id read calls default to. */
 	homeId?: string;
 	/** Read-only registry roots (each tagged by id) the bridge may read. */
@@ -120,10 +117,23 @@ interface RootAccess {
 	readonly writable: boolean;
 	/** Owning section (home only); read calls default their scope to it. */
 	readonly section?: string;
-	/** Lazily-loaded Smart Connections store for this root. */
-	store: SmartConnectionsStore | null;
-	/** Lazily-built link graph for this root. */
-	graph: VaultGraph | null;
+}
+
+interface TextBlock {
+	key: string;
+	heading?: string;
+	text: string;
+	lines?: [number, number];
+	granularity: "block" | "source";
+}
+
+interface LinkIndex {
+	/** file → list of outgoing link targets (raw wikilink text). */
+	forward: Map<string, { target: string; heading?: string }[]>;
+	/** file → list of files that link TO it. */
+	reverse: Map<string, string[]>;
+	/** All .md file paths in the vault. */
+	allFiles: string[];
 }
 
 export class VaultBridge {
@@ -133,8 +143,6 @@ export class VaultBridge {
 	readonly section?: string;
 	/** Home registry id. */
 	readonly homeId: string;
-	readonly #injectedEmbedder?: Embedder;
-	#defaultEmbedder: Embedder | null = null;
 	readonly #home: RootAccess;
 	/** id → root: home first, then read-only roots in declared order. */
 	readonly #roots: Map<string, RootAccess>;
@@ -143,14 +151,11 @@ export class VaultBridge {
 		const section = normalizeSection(options.section);
 		this.homeId = options.homeId ?? DEFAULT_HOME_REGISTRY_ID;
 		this.section = section;
-		this.#injectedEmbedder = options.embedder;
 		this.#home = {
 			id: this.homeId,
 			root: canonicalRoot(options.vaultRoot),
 			writable: true,
 			section,
-			store: null,
-			graph: null,
 		};
 		this.vaultRoot = this.#home.root;
 		this.#roots = new Map([[this.#home.id, this.#home]]);
@@ -160,8 +165,6 @@ export class VaultBridge {
 				id: readable.id,
 				root: canonicalRoot(readable.root),
 				writable: false,
-				store: null,
-				graph: null,
 			});
 		}
 	}
@@ -229,43 +232,9 @@ export class VaultBridge {
 		}
 	}
 
-	#store(access: RootAccess): SmartConnectionsStore {
-		if (!access.store) access.store = loadSmartConnectionsStore(access.root);
-		return access.store;
-	}
-
-	#graph(access: RootAccess): VaultGraph {
-		if (!access.graph) access.graph = new VaultGraph(access.root).build();
-		return access.graph;
-	}
-
-	/** Force a reload of the home embedding store + link graph (after writes). */
+	/** Force a reload of cached state (no-op; kept for API compatibility). */
 	invalidate(): void {
-		this.#home.store = null;
-		this.#home.graph = null;
-	}
-
-	/**
-	 * Choose the query embedder so it matches the model that produced the store's
-	 * vectors — ranking across mismatched models is meaningless (cosine over
-	 * differently-dimensioned/differently-trained vectors). An injected embedder
-	 * MUST match the store model (hard error otherwise); the default embedder is
-	 * built lazily from the store's recorded model key.
-	 */
-	#embedderFor(store: SmartConnectionsStore): Embedder {
-		const storeModel = store.model.modelKey;
-		if (this.#injectedEmbedder) {
-			if (this.#injectedEmbedder.modelKey !== storeModel) {
-				throw new Error(
-					`Query embedder model '${this.#injectedEmbedder.modelKey}' does not match the vault's stored embedding model '${storeModel}'; semantic rankings would be meaningless. Provide an embedder for '${storeModel}'.`,
-				);
-			}
-			return this.#injectedEmbedder;
-		}
-		if (!this.#defaultEmbedder || this.#defaultEmbedder.modelKey !== storeModel) {
-			this.#defaultEmbedder = new TransformersEmbedder(storeModel);
-		}
-		return this.#defaultEmbedder;
+		// Caches (embedding store, link graph) are no longer held in-process.
 	}
 
 	#inSection(filePath: string, section: string | undefined): boolean {
@@ -273,91 +242,167 @@ export class VaultBridge {
 		return filePath === section || filePath.startsWith(`${section}/`);
 	}
 
+	// ── searchNotes: text-grep fallback ───────────────────────────────────
+
 	/**
-	 * Hybrid semantic search. Embeds the query on-device, ranks Smart Connections'
-	 * stored block vectors by cosine similarity, and returns the top-k block-level
-	 * hits scoped to `section` (falling back to the target root's owning section,
-	 * then the whole root). Reads the home root unless `registry` selects another
-	 * readable root (rejected if not in the access set). Falls back to
-	 * source-level entries only when no blocks exist in scope.
+	 * Text-grep search over vault markdown files. Walks `.md` files under the
+	 * target root, splits each into heading-delimited blocks, and ranks blocks by
+	 * how many query terms they contain. Returns block-level hits scoped to
+	 * `section` (falling back to the root's owning section, then the whole root).
+	 * Reads the home root unless `registry` selects another readable root.
+	 *
+	 * When a mnemopi {@link BeamMemory} is available, prefer its `recall()` for
+	 * semantic (vector) search; this method is the offline fallback.
 	 */
-	async searchNotes(query: string, opts?: { section?: string; k?: number; registry?: string }): Promise<NoteHit[]> {
+	searchNotes(query: string, opts?: { section?: string; k?: number; registry?: string }): NoteHit[] {
 		const trimmed = query.trim();
 		if (trimmed.length === 0) throw new Error("search_notes requires a non-empty query");
 		const k = opts?.k && opts.k > 0 ? Math.floor(opts.k) : DEFAULT_TOP_K;
 		const access = this.#access(opts?.registry);
 		const scope = normalizeSection(opts?.section) ?? access.section;
-		const store = this.#store(access);
-		const scoped = Array.from(store.entries.values()).filter(e => this.#inSection(e.filePath, scope));
-		const blocks = scoped.filter(e => e.kind === "block");
-		const pool = blocks.length > 0 ? blocks : scoped;
-		if (pool.length === 0) return [];
-		const queryVec = await this.#embedderFor(store).embed(trimmed);
-		const ranked = pool
-			.map(entry => ({ entry, score: cosineSimilarity(queryVec, entry.vec) }))
-			.sort((a, b) => b.score - a.score)
-			.slice(0, k);
-		return ranked.map(({ entry, score }) => this.#toHit(access, entry, score));
+		const queryTerms = trimmed.toLowerCase().split(/\s+/).filter(t => t.length > 0);
+		const hits = this.#grepSearch(access.root, scope, queryTerms, k);
+		return hits;
 	}
 
-	#toHit(access: RootAccess, entry: EmbeddingEntry, score: number): NoteHit {
-		const hit: NoteHit = {
-			key: entry.key,
-			file: entry.filePath,
-			score,
-			text: this.#extractText(access, entry),
-			granularity: entry.kind,
+	/** Walk .md files, split into blocks, rank by term match density. */
+	#grepSearch(root: string, scope: string | undefined, terms: string[], k: number): NoteHit[] {
+		const results: NoteHit[] = [];
+		const mdFiles = this.#collectMdFiles(root, scope);
+		for (const relPath of mdFiles) {
+			let content: string;
+			try {
+				content = fs.readFileSync(path.join(root, relPath), "utf8");
+			} catch {
+				continue;
+			}
+			const blocks = this.#splitBlocks(content, relPath);
+			for (const block of blocks) {
+				const lower = block.text.toLowerCase();
+				let matchCount = 0;
+				for (const term of terms) {
+					// Count non-overlapping occurrences
+					let idx = 0;
+					while ((idx = lower.indexOf(term, idx)) >= 0) {
+						matchCount++;
+						idx += term.length;
+					}
+				}
+				if (matchCount === 0) continue;
+				// Score: match density capped at 1.0
+				const wordCount = Math.max(1, lower.split(/\s+/).length);
+				const score = Math.min(1, matchCount / Math.max(1, terms.length) * (matchCount / wordCount * 10));
+				results.push({
+					key: block.key,
+					file: relPath,
+					heading: block.heading,
+					score: Math.round(score * 1000) / 1000,
+					lines: block.lines,
+					text: block.text.slice(0, MAX_HIT_CHARS).trim(),
+					granularity: block.granularity,
+				});
+			}
+		}
+		results.sort((a, b) => b.score - a.score);
+		return results.slice(0, k);
+	}
+
+	/** Collect all .md files under a root, optionally scoped to a section prefix. */
+	#collectMdFiles(root: string, scope: string | undefined): string[] {
+		const files: string[] = [];
+		const scopePrefix = scope ? `${scope}/` : undefined;
+		const walk = (dir: string, relDir: string) => {
+			let entries: fs.Dirent[];
+			try {
+				entries = fs.readdirSync(dir, { withFileTypes: true });
+			} catch {
+				return;
+			}
+			for (const entry of entries) {
+				if (entry.name.startsWith(".")) continue;
+				const absChild = path.join(dir, entry.name);
+				const relChild = relDir ? `${relDir}/${entry.name}` : entry.name;
+				if (entry.isDirectory()) {
+					// Only recurse if within scope or no scope restriction
+					if (!scopePrefix || relChild === scope || relChild.startsWith(scopePrefix) || (scope !== undefined && scope.startsWith(relChild))) {
+						walk(absChild, relChild);
+					}
+				} else if (entry.isFile() && entry.name.endsWith(".md")) {
+					if (!scopePrefix || relChild === scope || relChild.startsWith(scopePrefix)) {
+						files.push(relChild);
+					}
+				}
+			}
 		};
-		if (entry.subKey) hit.heading = entry.subKey.replace(/^#+/, "").replace(/#/g, " › ").trim();
-		if (entry.lines) hit.lines = entry.lines;
-		return hit;
+		walk(root, "");
+		return files;
 	}
 
-	/** Extract the text for a hit: block line-range if known, else heading section. */
-	#extractText(access: RootAccess, entry: EmbeddingEntry): string {
-		let content: string;
-		try {
-			content = fs.readFileSync(path.join(access.root, entry.filePath), "utf8");
-		} catch {
-			return "";
-		}
+	/** Split a markdown file into heading-delimited blocks. */
+	#splitBlocks(content: string, relPath: string): TextBlock[] {
 		const lines = content.split("\n");
-		if (entry.lines) {
-			const [start, end] = entry.lines;
-			return lines
-				.slice(Math.max(0, start - 1), end)
-				.join("\n")
-				.slice(0, MAX_HIT_CHARS)
-				.trim();
+		const blocks: TextBlock[] = [];
+		const headings: { level: number; title: string; lineIdx: number }[] = [];
+
+		for (let i = 0; i < lines.length; i++) {
+			const m = /^(#{1,6})\s+(.*)$/.exec(lines[i]);
+			if (m) {
+				headings.push({ level: m[1].length, title: m[2].trim(), lineIdx: i });
+			}
 		}
-		if (entry.kind === "block" && entry.subKey)
-			return this.#extractHeadingSection(lines, entry.subKey).slice(0, MAX_HIT_CHARS);
-		return content.slice(0, MAX_HIT_CHARS).trim();
+
+		if (headings.length === 0) {
+			// Whole file as one source block
+			const text = content.trim();
+			if (text.length > 0) {
+				blocks.push({
+					key: relPath,
+					text,
+					lines: [1, lines.length],
+					granularity: "source",
+				});
+			}
+			return blocks;
+		}
+
+		// Preamble before first heading
+		if (headings[0].lineIdx > 0) {
+			const text = lines.slice(0, headings[0].lineIdx).join("\n").trim();
+			if (text.length > 0) {
+				blocks.push({
+					key: relPath,
+					text,
+					lines: [1, headings[0].lineIdx],
+					granularity: "source",
+				});
+			}
+		}
+
+		// Each heading section as a block
+		for (let i = 0; i < headings.length; i++) {
+			const h = headings[i];
+			const startLine = h.lineIdx + 1; // 1-based
+			const endLine = i + 1 < headings.length ? headings[i + 1].lineIdx : lines.length;
+			const blockLines = lines.slice(h.lineIdx, endLine);
+			const text = blockLines.join("\n").trim();
+			if (text.length === 0) continue;
+			const breadcrumb = headings
+				.slice(0, i + 1)
+				.map(x => x.title)
+				.join("#");
+			blocks.push({
+				key: `${relPath}#${breadcrumb}`,
+				heading: breadcrumb.replace(/#/g, " › "),
+				text,
+				lines: [startLine, endLine],
+				granularity: "block",
+			});
+		}
+
+		return blocks;
 	}
 
-	/** Slice the section under the final heading of a `#a#b#c` breadcrumb. */
-	#extractHeadingSection(lines: string[], subKey: string): string {
-		const parts = subKey.split("#").filter(p => p.length > 0);
-		const leaf = parts[parts.length - 1]?.trim().toLowerCase();
-		if (!leaf) return lines.join("\n").trim();
-		let start = -1;
-		for (let i = 0; i < lines.length; i++) {
-			const m = /^#{1,6}\s+(.*)$/.exec(lines[i]);
-			if (m && m[1].trim().toLowerCase() === leaf) {
-				start = i;
-				break;
-			}
-		}
-		if (start < 0) return "";
-		let end = lines.length;
-		for (let i = start + 1; i < lines.length; i++) {
-			if (/^#{1,6}\s+/.test(lines[i])) {
-				end = i;
-				break;
-			}
-		}
-		return lines.slice(start, end).join("\n").trim();
-	}
+	// ── getNote / writeNote (unchanged) ───────────────────────────────────
 
 	/**
 	 * Read a note's markdown content. Bare relative paths are rooted in the owning
@@ -388,49 +433,128 @@ export class VaultBridge {
 		return { path: rel, bytesWritten: Buffer.byteLength(content, "utf8"), created };
 	}
 
+	// ── getConnections: wikilink regex scan ───────────────────────────────
+
 	/**
-	 * Traverse the link graph from a note: forward wikilinks, backlinks, and the
-	 * note's nearest vector neighbors (the "embed → entry node → traverse" hybrid,
-	 * seeded from the note's own stored embedding — no query, no network). Reads
-	 * the home root unless `registry` selects another readable root.
+	 * Traverse the link graph from a note: forward wikilinks and backlinks via
+	 * regex scan of `[[wikilink]]` syntax across all vault markdown files.
+	 * The `relatedByVector` field is always empty (embedding-based neighbors
+	 * require mnemopi; use the vault:// protocol handler for Obsidian CLI graph).
+	 * Reads the home root unless `registry` selects another readable root.
 	 */
 	getConnections(notePath: string, registry?: string): Connections {
 		const access = this.#access(registry);
 		const { abs, rel } = this.#resolveIn(access, notePath, { rootInSection: true });
 		if (!fs.existsSync(abs)) throw new Error(`Note not found: ${rel}`);
-		const graph = this.#graph(access);
+		const index = this.#buildLinkIndex(access.root);
 		return {
 			file: rel,
-			linksOut: graph
-				.linksOut(rel)
-				.map(l =>
-					l.heading
-						? { target: l.target, resolved: l.resolved, heading: l.heading }
-						: { target: l.target, resolved: l.resolved },
-				),
-			linksIn: graph.linksIn(rel),
-			relatedByVector: this.#vectorNeighbors(access, rel),
+			linksOut: this.#resolveLinksOut(rel, index),
+			linksIn: this.#resolveLinksIn(rel, index),
+			relatedByVector: [],
 		};
 	}
 
-	/** Nearest OTHER notes by the entry note's stored source embedding. */
-	#vectorNeighbors(
-		access: RootAccess,
-		notePath: string,
-		k: number = DEFAULT_RELATED,
-	): { file: string; score: number }[] {
-		const store = this.#store(access);
-		const seed = store.entries.get(notePath);
-		if (!seed) return [];
-		const scores = new Map<string, number>();
-		for (const entry of store.entries.values()) {
-			if (entry.filePath === notePath) continue;
-			const score = cosineSimilarity(seed.vec, entry.vec);
-			const prev = scores.get(entry.filePath);
-			if (prev === undefined || score > prev) scores.set(entry.filePath, score);
+	/** Build a forward + reverse link index for all .md files under a root. */
+	#buildLinkIndex(root: string): LinkIndex {
+		const forward = new Map<string, { target: string; heading?: string }[]>();
+		const reverse = new Map<string, string[]>();
+		const allFiles = this.#collectMdFiles(root, undefined);
+
+		// [[wikilink]] or ![[embed]]
+		const wikilinkRe = /!?\[\[([^\]]+)\]\]/g;
+
+		for (const relPath of allFiles) {
+			let content: string;
+			try {
+				content = fs.readFileSync(path.join(root, relPath), "utf8");
+			} catch {
+				continue;
+			}
+			const links: { target: string; heading?: string }[] = [];
+			for (const m of content.matchAll(wikilinkRe)) {
+				const inner = m[1];
+				const parsed = this.#parseWikiTarget(inner);
+				links.push(parsed);
+				// Build reverse index: target → source
+				const normTarget = parsed.target.toLowerCase();
+				const sources = reverse.get(normTarget) ?? [];
+				if (!sources.includes(relPath)) {
+					sources.push(relPath);
+					reverse.set(normTarget, sources);
+				}
+			}
+			forward.set(relPath, links);
 		}
-		return Array.from(scores, ([file, score]) => ({ file, score }))
-			.sort((a, b) => b.score - a.score)
-			.slice(0, k);
+
+		return { forward, reverse, allFiles };
+	}
+
+	/** Parse a wikilink inner text to extract target note and optional heading. */
+	#parseWikiTarget(inner: string): { target: string; heading?: string } {
+		const noAlias = inner.split("|", 1)[0].trim();
+		const caretIdx = noAlias.indexOf("^");
+		const beforeBlock = caretIdx >= 0 ? noAlias.slice(0, caretIdx) : noAlias;
+		const hashIdx = beforeBlock.indexOf("#");
+		if (hashIdx >= 0) {
+			return { target: beforeBlock.slice(0, hashIdx).trim(), heading: beforeBlock.slice(hashIdx + 1).trim() };
+		}
+		return { target: beforeBlock.trim() };
+	}
+
+	/** Resolve outgoing links for a note, preferring same-folder matches. */
+	#resolveLinksOut(
+		notePath: string,
+		index: LinkIndex,
+	): { target: string; resolved?: string; heading?: string }[] {
+		const links = index.forward.get(notePath) ?? [];
+		const noteDir = path.dirname(notePath);
+		const knownFiles = new Set(index.allFiles.map(f => f.toLowerCase()));
+		const basenameIndex = new Map<string, string[]>(); // lowercase basename → full paths
+		for (const f of index.allFiles) {
+			const base = path.basename(f, ".md").toLowerCase();
+			const list = basenameIndex.get(base) ?? [];
+			list.push(f);
+			basenameIndex.set(base, list);
+		}
+
+		return links.map(link => {
+			// Try exact path match first
+			const exactCandidates = [
+				link.target,
+				`${link.target}.md`,
+				path.join(noteDir, link.target),
+				path.join(noteDir, `${link.target}.md`),
+			];
+			for (const c of exactCandidates) {
+				if (knownFiles.has(c.toLowerCase())) return { target: link.target, resolved: c, heading: link.heading };
+			}
+
+			// Try basename match
+			const base = path.basename(link.target).toLowerCase();
+			const matches = basenameIndex.get(base);
+			if (matches && matches.length === 1) {
+				return { target: link.target, resolved: matches[0], heading: link.heading };
+			}
+			// Same-folder preference for ambiguous basenames
+			if (matches && matches.length > 1) {
+				const sameFolder = matches.find(m => path.dirname(m) === noteDir);
+				if (sameFolder) return { target: link.target, resolved: sameFolder, heading: link.heading };
+			}
+
+			return { target: link.target, heading: link.heading };
+		});
+	}
+
+	/** Resolve incoming links (backlinks) for a note. */
+	#resolveLinksIn(notePath: string, index: LinkIndex): { source: string }[] {
+		const normPath = notePath.toLowerCase();
+		// Direct match
+		const direct = index.reverse.get(normPath) ?? [];
+		// Basename match (notes linked as [[NoteName]] without path)
+		const base = path.basename(notePath, ".md").toLowerCase();
+		const basenameSources = index.reverse.get(base) ?? [];
+		const sources = [...new Set([...direct, ...basenameSources])];
+		return sources.map(s => ({ source: s }));
 	}
 }

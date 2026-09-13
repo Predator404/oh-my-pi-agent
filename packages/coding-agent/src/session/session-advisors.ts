@@ -73,8 +73,9 @@ import { serviceTierForAllFamilies, serviceTierSettingToTier } from "../config/s
 import type { Settings } from "../config/settings";
 import { CursorExecHandlers, type CursorMcpResourceAdapter } from "../cursor";
 import { bridgeToolMap } from "../cursor-bridge-tools";
-import { discoverEntities, resolveEntityConfig } from "../entity/loader";
-import type { ResolvedEntityConfig } from "../entity/schema";
+import { resolveEntityConfig, resolveEntityByName } from "../entity/resolve";
+import type { AgentDefinition, ResolvedEntityConfig } from "../task/types";
+import { discoverAgents } from "../task/discovery";
 import { estimateToolSchemaTokens } from "../modes/utils/context-usage";
 import type { PlanModeState } from "../plan-mode/state";
 import advisorSystemPrompt from "../prompts/advisor/system.md" with { type: "text" };
@@ -379,12 +380,14 @@ export class SessionAdvisors {
 		const map: Record<string, { icon?: string; color?: string }> = {};
 		this.#entityVisualByName = map;
 		try {
-			const { entities } = await discoverEntities();
-			for (const meta of entities) {
-				if (!meta.icon && !meta.color) continue;
-				const visual = { icon: meta.icon, color: meta.color };
-				map[meta.name.toLowerCase()] = visual;
-				map[slugifyAdvisorName(meta.name)] = visual;
+			const cwd = this.#host.sessionManager.getCwd();
+			const { agents } = await discoverAgents(cwd);
+			for (const agent of agents) {
+				if (!agent.role) continue;
+				if (!agent.icon && !agent.color) continue;
+				const visual = { icon: agent.icon, color: agent.color };
+				map[agent.name.toLowerCase()] = visual;
+				map[slugifyAdvisorName(agent.name)] = visual;
 			}
 		} catch (error) {
 			logger.debug("advisor entity-visual resolve failed", { err: String(error) });
@@ -1978,9 +1981,11 @@ export class SessionAdvisors {
 		const slug = slugifyAdvisorName(token);
 		const lower = token.toLowerCase();
 		let entityName: string | undefined;
+		let agents: AgentDefinition[];
 		try {
-			const { entities } = await discoverEntities();
-			const match = entities.find(e => e.name.toLowerCase() === lower || slugifyAdvisorName(e.name) === slug);
+			const cwd = this.#host.sessionManager.getCwd();
+			({ agents } = await discoverAgents(cwd));
+			const match = agents.find(e => e.name.toLowerCase() === lower || slugifyAdvisorName(e.name) === slug);
 			entityName = match?.name;
 		} catch (error) {
 			logger.debug("advisor entity discovery failed for direct address", { token, err: String(error) });
@@ -1990,7 +1995,7 @@ export class SessionAdvisors {
 
 		let resolved: ResolvedEntityConfig;
 		try {
-			resolved = await resolveEntityConfig(entityName);
+			resolved = resolveEntityByName(agents, entityName);
 		} catch (error) {
 			logger.warn("failed to resolve addressed entity", { entity: entityName, err: String(error) });
 			return undefined;

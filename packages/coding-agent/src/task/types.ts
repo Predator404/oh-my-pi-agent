@@ -1,6 +1,8 @@
 import { type BaseType, type } from "@oh-my-pi/omptype";
 import type { Usage } from "@oh-my-pi/pi-ai";
 import { $env } from "@oh-my-pi/pi-utils";
+import type { AdvisorConfig } from "../advisor/config";
+import type { ThemeColor } from "../modes/theme/schema";
 import type { AgentSessionEvent } from "../session/agent-session";
 import type { ConfiguredThinkingLevel, TaskEffort } from "../thinking";
 import type { NestedRepoPatch } from "./worktree";
@@ -392,6 +394,49 @@ export interface AgentDefinition {
 	advisor?: boolean | string;
 	source: AgentSource;
 	filePath?: string;
+
+	// ── OMA persistent-entity extensions (optional; absent on stock OMP agents) ──
+	/** OMA: formal role driving memory-retention policy (`agent` | `persona`). */
+	role?: "agent" | "persona";
+	/** OMA: per-entity memory-bank binding (mnemopi backend, bank name, auto-retain flag). */
+	memory?: { backend: "mnemopi"; bank: string; autoRetain: boolean };
+	/** OMA: owned vault subtree under `~/vault/`, e.g. `agents/<name>`. */
+	vaultSection?: string;
+	/** OMA: home registry id (ADR 0004) — the registry this agent's record lives in. */
+	registry?: string;
+	/** OMA: standing-advisor entry using OMP's native WATCHDOG.yml shape. */
+	watchdog?: AdvisorConfig;
+	/** OMA: optional local/cloud model endpoint pin. */
+	hosting?: { modelEndpoint?: string };
+	/** OMA: single display glyph (emoji or char) for this entity in the UI. */
+	icon?: string;
+	/** OMA: theme-color token tinting this entity's label/marker. */
+	color?: ThemeColor;
+}
+
+/**
+ * OMA: fully-resolved entity config for launching a persistent agent session.
+ * Every optional OMA field on AgentDefinition is required here — the resolver
+ * has validated and defaulted them. This is the WS2→WS1 seam.
+ */
+export interface ResolvedEntityConfig {
+	name: string;
+	description: string;
+	role: "agent" | "persona";
+	icon?: string;
+	color?: ThemeColor;
+	model?: string[];
+	thinkingLevel?: ConfiguredThinkingLevel;
+	systemPrompt: string;
+	tools?: string[];
+	autoloadSkills?: string[];
+	memory: { backend: "mnemopi"; bank: string; autoRetain: boolean };
+	vaultSection: string;
+	registry: string;
+	watchdog?: AdvisorConfig;
+	hosting?: { modelEndpoint?: string };
+	cwd?: string;
+	source: { filePath: string };
 }
 
 /** Details extracted from a subagent `yield` tool call for final-result assembly and task rendering. */

@@ -1,10 +1,8 @@
 /**
- * Entity registry (contract C1): schema, loader, and record→session resolver
+ * Entity registry (contract C1): resolution, MCP wiring, registries, and setup
  * for the persistent multi-entity runtime (SPEC §4.1, §5, §12.2).
  */
-export * from "./loader";
 export * from "./mcp-wiring";
-export * from "./record-writer";
 export * from "./registries";
-export * from "./schema";
+export * from "./resolve";
 export * from "./setup";
