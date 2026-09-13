@@ -151,7 +151,7 @@ function makeHarness() {
 		discover: async opts => {
 			record("discover", opts);
 			return {
-				entities: [
+				agents: [
 					{
 						name: "phi",
 						role: "persona",
@@ -159,7 +159,7 @@ function makeHarness() {
 						vaultSection: "personas/phi",
 					},
 				],
-				errors: [],
+				projectAgentsDir: null,
 			} as never;
 		},
 		resolve: async (name, opts) => {
@@ -174,11 +174,11 @@ function makeHarness() {
 		},
 		createRecord: async (name, fields, opts) => {
 			record("createRecord", name, fields, opts);
-			return { name, filePath: `/r/${name}.md`, created: true };
+			return { ok: true, filePath: `/r/${name}.md` };
 		},
 		updateRecord: async (name, updates, opts) => {
 			record("updateRecord", name, updates, opts);
-			return { name, filePath: `/r/${name}.md`, created: false };
+			return { ok: true, filePath: `/r/${name}.md` };
 		},
 		runSetup: async opts => {
 			record("runSetup", opts);

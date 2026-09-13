@@ -4,7 +4,7 @@
  * host-agnostic picker mechanics in pi-tui to the OMA entity registry.
  */
 import type { EntityMentionCandidate, EntityMentionCandidateSource } from "@oh-my-pi/pi-tui/prompt/entity-autocomplete";
-import { discoverEntities } from "../entity";
+import { discoverAgents } from "../task/discovery";
 
 const ENTITY_CACHE_TTL_MS = 5_000;
 
@@ -22,13 +22,15 @@ export function createEntityMentionSource(): EntityMentionCandidateSource {
 		const now = Date.now();
 		if (entityCache && now - entityCache.at < ENTITY_CACHE_TTL_MS) return entityCache.entities;
 		try {
-			const { entities } = await discoverEntities();
-			const mapped = entities.map(entity => ({
-				name: entity.name,
-				description: entity.description,
-				role: entity.role,
-				icon: entity.icon,
-			}));
+			const { agents } = await discoverAgents(process.cwd());
+			const mapped = agents
+				.filter(agent => agent.role)
+				.map(agent => ({
+					name: agent.name,
+					description: agent.description,
+					role: agent.role as string,
+					icon: agent.icon,
+				}));
 			entityCache = { at: now, entities: mapped };
 			return mapped;
 		} catch {

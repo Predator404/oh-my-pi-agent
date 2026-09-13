@@ -17,7 +17,9 @@
  * — so an operator is never told "bank policy forbids this" when the real cause
  * is that no policy loaded at all.
  */
-import { discoverEntities, type EntityLoadError, type EntityRegistryOptions } from "../entity";
+import { discoverAgents } from "../task/discovery";
+import type { AgentDefinition } from "../task/types";
+import { type EntityLoadError, type EntityRegistryOptions } from "../entity";
 
 /** Aggregated retention policy for one bank. */
 export interface BankPolicy {
@@ -57,12 +59,17 @@ export class BankPolicyRegistry {
 
 	/** (Re)load the bank→policy map from the entity registry. */
 	async load(): Promise<void> {
-		const { entities, errors } = await discoverEntities(this.#options);
+		// discoverAgents needs a cwd; policy resolution is project-agnostic so use the
+		// configured registry root or fall back to cwd.
+		const registryRoot = this.#options.registryRoot;
+		const cwd = registryRoot ?? process.cwd();
+		const { agents, errors } = await discoverAgents(cwd);
+		const entityAgents = agents.filter(a => a.role);
 		this.#byBank.clear();
 		this.#loadErrors = errors;
-		this.#entityCount = entities.length;
-		for (const entity of entities) {
-			if (entity.memory.backend !== "mnemopi") continue;
+		this.#entityCount = entityAgents.length;
+		for (const entity of entityAgents) {
+			if (entity.memory?.backend !== "mnemopi") continue;
 			const bank = entity.memory.bank;
 			const existing = this.#byBank.get(bank);
 			if (existing === undefined) {

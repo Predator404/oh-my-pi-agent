@@ -23,10 +23,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { getAgentDir, isEnoent, logger } from "@oh-my-pi/pi-utils";
 import { YAML } from "bun";
-import { ENTITY_RECORDS_SUBDIR, ENTITY_REGISTRY_ENV, getEntityRegistryRoot } from "./loader";
-import { isDevCheckout, vaultServerModulePath } from "./mcp-wiring";
 import {
 	DEFAULT_REGISTRY_ID,
+	ENTITY_RECORDS_SUBDIR,
+	ENTITY_REGISTRY_ENV,
+	getEntityRegistryRoot,
 	getRegistryManifestPath,
 	parseRegistryManifest,
 	REGISTRY_MANIFEST_ENV,
@@ -34,6 +35,7 @@ import {
 	type RegistryManifest,
 	type RegistryVisibility,
 } from "./registries";
+import { isDevCheckout, vaultServerModulePath } from "./mcp-wiring";
 
 /** Vault section subdirectories (SPEC §4.3, §7). */
 export const VAULT_SECTION_DIRS = ["agents", "personas", "projects"] as const;

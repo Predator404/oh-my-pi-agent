@@ -23,9 +23,10 @@ import { join } from "node:path";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import { getAgentDir, logger } from "@oh-my-pi/pi-utils";
 import type { SourceMeta } from "../../capability/types";
-import { resolveEntityConfig } from "../../entity/loader";
+import { resolveEntityByName } from "../../entity/resolve";
+import { discoverAgents } from "../../task/discovery";
 import { buildEntityMcpServers, ENTITY_MCP_SERVER_NAMES } from "../../entity/mcp-wiring";
-import type { ResolvedEntityConfig } from "../../entity/schema";
+import type { ResolvedEntityConfig } from "../../task/types";
 import { buildSkillPromptMessage } from "../../extensibility/skills";
 import { callTool } from "../../mcp/client";
 import { MCPManager } from "../../mcp/manager";
@@ -248,8 +249,9 @@ export async function startAgentWorkerFromEnvironment(env: NodeJS.ProcessEnv = p
 	const endpoint = required(env, AGENT_WORKER_ENDPOINT_ENV);
 	const cwdOverride = env[AGENT_WORKER_CWD_ENV];
 
-	const config = await resolveEntityConfig(entityName, cwdOverride ? { cwd: cwdOverride } : undefined);
-	const cwd = config.cwd ?? entityHome(entityName);
+	const discoveryResult = await discoverAgents(cwdOverride ?? process.cwd());
+	const config = resolveEntityByName(discoveryResult.agents, entityName);
+	const cwd = cwdOverride ?? entityHome(entityName);
 	mkdirSync(cwd, { recursive: true });
 
 	const sessionFile = resolveSessionFile(entityName, cwd, env);
