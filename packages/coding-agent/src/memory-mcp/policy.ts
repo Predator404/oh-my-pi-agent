@@ -66,7 +66,7 @@ export class BankPolicyRegistry {
 		const { agents, errors } = await discoverAgents(cwd);
 		const entityAgents = agents.filter(a => a.role);
 		this.#byBank.clear();
-		this.#loadErrors = errors;
+		this.#loadErrors = errors ?? [];
 		this.#entityCount = entityAgents.length;
 		for (const entity of entityAgents) {
 			if (entity.memory?.backend !== "mnemopi") continue;

@@ -5,18 +5,8 @@
  * write path.
  */
 export { BankStore, type BankStoreOptions, type RetainMode, type RetainOptions } from "./bank-store";
-export {
-	type AutoRetainDecision,
-	type AutoRetainReason,
-	type BankPolicy,
-	BankPolicyRegistry,
-} from "./policy";
-export {
-	MemoryMcpServer,
-	type MemoryMcpServerOptions,
-	SERVER_NAME,
-	SERVER_VERSION,
-} from "./server";
+export { type AutoRetainDecision, type AutoRetainReason, type BankPolicy, BankPolicyRegistry } from "./policy";
+export { MemoryMcpServer, type MemoryMcpServerOptions, SERVER_NAME, SERVER_VERSION } from "./server";
 export {
 	FORGET_SCHEMA,
 	getToolDefinitions,

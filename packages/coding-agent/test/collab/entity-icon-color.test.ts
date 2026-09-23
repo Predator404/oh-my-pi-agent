@@ -24,12 +24,12 @@ import {
 	parseCollabLink,
 } from "@oh-my-pi/pi-coding-agent/collab/protocol";
 import { CollabSocket } from "@oh-my-pi/pi-coding-agent/collab/relay-client";
-import { entityGlyph } from "@oh-my-pi/pi-coding-agent/modes/components/agent-hub-renderer";
+import { entityGlyph } from "@oh-my-pi/pi-tui/overlays/agent-hub-renderer";
 import {
 	getRunningSubagentBadgeAgentIds,
 	getRunningSubagentBadgeRegistry,
-} from "@oh-my-pi/pi-coding-agent/modes/running-subagent-badge";
-import { initTheme, setSymbolPreset, theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+} from "@oh-my-pi/pi-tui/overlays/running-subagent-badge";
+import { initTheme, setSymbolPreset, theme } from "@oh-my-pi/pi-tui/theme";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import { type AgentRef, AgentRegistry, MAIN_AGENT_ID } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { installInMemoryRelay, uninstallInMemoryRelay } from "./helpers/in-memory-relay";
@@ -125,9 +125,9 @@ function makeGuestContext(): InteractiveModeContext {
 		showError: () => {},
 		updateEditorTopBorder: () => {},
 		updateEditorBorderColor: () => {},
-		eventController: { handleEvent: () => Promise.resolve() },
+		eventController: { handleEvent: () => Promise.resolve(), takeDisplaceableComponents: () => [] },
 		syncRunningSubagentBadge: () => {
-			const registry = getRunningSubagentBadgeRegistry(ctx.collabGuest);
+			const registry = getRunningSubagentBadgeRegistry(ctx.collabGuest, AgentRegistry.global());
 			ctx.statusLine.setRunningSubagents(getRunningSubagentBadgeAgentIds(registry));
 		},
 	} as unknown as InteractiveModeContext;

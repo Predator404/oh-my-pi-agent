@@ -27,10 +27,16 @@ const ICON_GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "gr
  * Resolve an AgentDefinition into a launchable ResolvedEntityConfig.
  * Validates all OMA fields with the same rigour as the old parseEntityMeta.
  */
-export function resolveEntityConfig(agent: AgentDefinition, registryVisibility?: "public" | "private"): ResolvedEntityConfig {
+export function resolveEntityConfig(
+	agent: AgentDefinition,
+	registryVisibility?: "public" | "private",
+): ResolvedEntityConfig {
 	const name = agent.name;
 	if (!name || !ENTITY_NAME_PATTERN.test(name)) {
-		throw new EntityConfigError(`name must be a filesystem-safe id matching /^[a-z0-9][a-z0-9._-]*$/`, name ?? "<empty>");
+		throw new EntityConfigError(
+			`name must be a filesystem-safe id matching /^[a-z0-9][a-z0-9._-]*$/`,
+			name ?? "<empty>",
+		);
 	}
 
 	const role = agent.role;
@@ -61,7 +67,10 @@ export function resolveEntityConfig(agent: AgentDefinition, registryVisibility?:
 		throw new EntityConfigError("memory.bank must be a non-empty string", name);
 	}
 	if (!(VALID_MEMORY_BACKENDS as readonly string[]).includes(memory.backend)) {
-		throw new EntityConfigError(`memory.backend must be one of ${VALID_MEMORY_BACKENDS.map(b => `"${b}"`).join(" | ")}`, name);
+		throw new EntityConfigError(
+			`memory.backend must be one of ${VALID_MEMORY_BACKENDS.map(b => `"${b}"`).join(" | ")}`,
+			name,
+		);
 	}
 
 	const vaultSection = agent.vaultSection;
@@ -72,7 +81,7 @@ export function resolveEntityConfig(agent: AgentDefinition, registryVisibility?:
 	const registry = agent.registry ?? "oma";
 
 	// Retention policy: persona cannot auto-retain — reject, don't silently coerce
-	let autoRetain = memory.autoRetain;
+	const autoRetain = memory.autoRetain;
 	if (role === "persona" && autoRetain) {
 		throw new EntityConfigError(
 			`role "persona" cannot set memory.autoRetain: true — personas are curated-only (set role: agent for episodic retention)`,

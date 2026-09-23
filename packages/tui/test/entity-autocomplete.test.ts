@@ -73,7 +73,10 @@ describe("getEntityMentionSuggestions", () => {
 	];
 
 	it("fuzzy-matches supplied candidates and inserts a @@<name>: address value", async () => {
-		const items = await getEntityMentionSuggestions({ token: "@@ph", atCount: 2, query: "ph" }, async () => candidates);
+		const items = await getEntityMentionSuggestions(
+			{ token: "@@ph", atCount: 2, query: "ph" },
+			async () => candidates,
+		);
 		expect(items.map(item => item.value)).toEqual(["@@phi: "]);
 		expect(items[0]?.label).toBe("phi");
 		expect(items[0]?.description).toContain("persona");

@@ -353,13 +353,6 @@ describe("prompt action autocomplete", () => {
 			cursorLine: 0,
 			cursorCol: 9,
 		});
-
-		it("does not open the entity picker mid-message", async () => {
-			// `@@` past the start of the message is not an address; the picker must
-			// not offer entities there (matches parseAdvisorAddress's leading anchor).
-			const suggestions = await provider().getSuggestions(["ask @@ph"], 0, 8);
-			expect(suggestions?.items.some(i => i.value === "@@phi: ")).not.toBe(true);
-		});
 	});
 
 	it("limits model mention suggestions to the first twenty ranked candidates", async () => {

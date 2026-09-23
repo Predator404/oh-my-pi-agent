@@ -9,8 +9,8 @@ export type {
 } from "@oh-my-pi/pi-tui/overlays/session-observer-registry";
 import { type BaseType, type } from "@oh-my-pi/omptype";
 import { $env } from "@oh-my-pi/pi-utils";
+import type { AdvisorConfig } from "@oh-my-pi/pi-tui/overlays/advisor-config";
 import type { ThemeColor } from "@oh-my-pi/pi-tui/theme";
-import type { AdvisorConfig } from "../advisor/config";
 import type { AgentSessionEvent } from "../session/agent-session";
 import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 

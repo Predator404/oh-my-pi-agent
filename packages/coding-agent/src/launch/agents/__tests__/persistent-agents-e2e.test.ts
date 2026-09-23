@@ -30,12 +30,9 @@ import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import { clearCache as clearFsCache } from "@oh-my-pi/pi-coding-agent/capability/fs";
 import { expandAtImports } from "@oh-my-pi/pi-coding-agent/discovery/at-imports";
 // --- WS2 entity registry (C1) ------------------------------------------------
-import {
-	EntityValidationError,
-	resolveEntityConfig,
-	runEntitySetup,
-	VAULT_SECTION_DIRS,
-} from "@oh-my-pi/pi-coding-agent/entity";
+import { resolveEntityByName, runEntitySetup, VAULT_SECTION_DIRS } from "@oh-my-pi/pi-coding-agent/entity";
+import { discoverAgents } from "@oh-my-pi/pi-coding-agent/task/discovery";
+import type { ResolvedEntityConfig } from "@oh-my-pi/pi-coding-agent/task/types";
 import { buildSkillPromptMessage, type Skill } from "@oh-my-pi/pi-coding-agent/extensibility/skills";
 import { callTool, listTools } from "@oh-my-pi/pi-coding-agent/mcp/client";
 // --- WS3 memory MCP (C2) -----------------------------------------------------
@@ -165,14 +162,27 @@ describe("(a) WS7a setup — registry, vault sections, ~/vault symlink", () => {
 	});
 });
 
+/** Resolve one entity by name from a specific registry root, without leaking `OMP_ENTITY_REGISTRY`. */
+async function resolveEntityByRegistryRoot(name: string, root: string): Promise<ResolvedEntityConfig> {
+	const prev = process.env.OMP_ENTITY_REGISTRY;
+	process.env.OMP_ENTITY_REGISTRY = root;
+	try {
+		const { agents } = await discoverAgents(process.cwd());
+		return resolveEntityByName(agents, name);
+	} finally {
+		if (prev === undefined) delete process.env.OMP_ENTITY_REGISTRY;
+		else process.env.OMP_ENTITY_REGISTRY = prev;
+	}
+}
+
 // ===========================================================================
 // (b) WS2 — two registry entities resolve to launch configs (C1 → C4/WS1).
 // ===========================================================================
 
 describe("(b) WS2 resolve — mixed-role entities → launch configs", () => {
 	test("agent and persona records resolve with role-consistent retention policy", async () => {
-		const agent = await resolveEntityConfig(AGENT_NAME, { registryRoot });
-		const persona = await resolveEntityConfig(PERSONA_NAME, { registryRoot });
+		const agent = await resolveEntityByRegistryRoot(AGENT_NAME, registryRoot);
+		const persona = await resolveEntityByRegistryRoot(PERSONA_NAME, registryRoot);
 
 		expect(agent.role).toBe("agent");
 		expect(agent.memory).toEqual({ backend: "mnemopi", bank: AGENT_BANK, autoRetain: true });
@@ -187,16 +197,18 @@ describe("(b) WS2 resolve — mixed-role entities → launch configs", () => {
 		expect(persona.systemPrompt).toContain("Phi is a narrow-domain persona");
 	});
 
-	test("C1 load-time policy rejects a persona that claims autoRetain: true", async () => {
+	test("C1 load-time policy coerces a persona's claimed autoRetain: true to false", async () => {
 		const badRoot = path.join(root, "bad-registry");
 		await fsp.mkdir(path.join(badRoot, "entities"), { recursive: true });
 		await fsp.writeFile(
 			path.join(badRoot, "entities", "rogue.md"),
 			`---\nname: rogue\ndescription: illegal curated+auto persona.\nrole: persona\nmemory:\n  backend: mnemopi\n  bank: rogue\n  autoRetain: true\nvaultSection: personas/rogue\n---\nbody\n`,
 		);
-		await expect(resolveEntityConfig("rogue", { registryRoot: badRoot })).rejects.toBeInstanceOf(
-			EntityValidationError,
-		);
+		// Retention policy is enforced at frontmatter-parse time (task/discovery.ts),
+		// before resolution ever sees the record — a persona can never carry
+		// autoRetain: true through to a ResolvedEntityConfig.
+		const rogue = await resolveEntityByRegistryRoot("rogue", badRoot);
+		expect(rogue.memory.autoRetain).toBe(false);
 	});
 });
 
@@ -664,8 +676,9 @@ describe("(c+d) memory + vault through the real spawn glue (buildEntityMcpManage
 		process.env.OMP_ENTITY_REGISTRY = registryRoot;
 		process.env.OMP_VAULT_PATH = vaultLocation;
 
-		const agentCfg = await resolveEntityConfig(AGENT_NAME, { registryRoot });
-		const personaCfg = await resolveEntityConfig(PERSONA_NAME, { registryRoot });
+		const { agents: mcpAgents } = await discoverAgents(process.cwd());
+		const agentCfg = resolveEntityByName(mcpAgents, AGENT_NAME);
+		const personaCfg = resolveEntityByName(mcpAgents, PERSONA_NAME);
 		const cwd = path.join(root, "worker-cwd");
 		await fsp.mkdir(cwd, { recursive: true });
 

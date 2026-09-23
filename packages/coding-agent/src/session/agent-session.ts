@@ -6860,7 +6860,9 @@ export class AgentSession {
 					if (result?.systemPrompt !== undefined || advisorDeferralName) {
 						const overrideBase = result?.systemPrompt ?? this.#tools.baseSystemPrompt;
 						this.#tools.setTurnSystemPromptOverride(
-							advisorDeferralName ? [...overrideBase, primaryDeferralInstruction(advisorDeferralName)] : overrideBase,
+							advisorDeferralName
+								? [...overrideBase, primaryDeferralInstruction(advisorDeferralName)]
+								: overrideBase,
 						);
 					} else {
 						this.#tools.clearTurnSystemPromptOverride();

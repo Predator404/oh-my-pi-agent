@@ -289,9 +289,7 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 		case "roster":
 		case "list": {
 			const discovered = await deps.discover({ registry });
-			const agents = registry
-				? discovered.agents.filter(e => e.registry === registry)
-				: discovered.agents;
+			const agents = registry ? discovered.agents.filter(e => e.registry === registry) : discovered.agents;
 			if (json) {
 				emit(deps, true, { agents, errors: [] }, "");
 				return;
@@ -380,12 +378,7 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 				);
 			}
 			const result = await deps.updateRecord(name, updates, { registry });
-			return emit(
-				deps,
-				json,
-				{ ...result, updates },
-				`Updated "${name}" (${updates.map(u => u.key).join(", ")})`,
-			);
+			return emit(deps, json, { ...result, updates }, `Updated "${name}" (${updates.map(u => u.key).join(", ")})`);
 		}
 		case "setup": {
 			const report = await deps.runSetup({
@@ -770,14 +763,13 @@ export const AGENT_RUNTIME_SERVICE = "agent-runtime";
 
 /** Real collaborators: broker-backed C4 client + registry loader/writer + setup. */
 export async function defaultEntityDeps(): Promise<EntityCommandDeps> {
-	const [{ AgentDaemonClient }, { daemonClientForGlobal }, setup, sessionPaths, sessionLoader] =
-		await Promise.all([
-			import("../launch/agents/agent-daemon-client"),
-			import("../launch/client"),
-			import("../entity/setup"),
-			import("../launch/agents/entity-session-paths"),
-			import("../session/session-loader"),
-		]);
+	const [{ AgentDaemonClient }, { daemonClientForGlobal }, setup, sessionPaths, sessionLoader] = await Promise.all([
+		import("../launch/agents/agent-daemon-client"),
+		import("../launch/client"),
+		import("../entity/setup"),
+		import("../launch/agents/entity-session-paths"),
+		import("../session/session-loader"),
+	]);
 	return {
 		write: text => process.stdout.write(text),
 		connectClient: async () => new AgentDaemonClient(await daemonClientForGlobal(AGENT_RUNTIME_SERVICE)),
@@ -790,7 +782,10 @@ export async function defaultEntityDeps(): Promise<EntityCommandDeps> {
 			const root = options.registryRoot ?? getEntityRegistryRoot();
 			await fs.mkdir(path.join(root, ENTITY_RECORDS_SUBDIR), { recursive: true });
 			const filePath = path.join(root, ENTITY_RECORDS_SUBDIR, `${name}.md`);
-			const exists = await fs.access(filePath).then(() => true).catch(() => false);
+			const exists = await fs
+				.access(filePath)
+				.then(() => true)
+				.catch(() => false);
 			if (exists && !options.force) {
 				throw new EntityCommandUsageError(
 					`Entity "${name}" already exists at ${filePath} (use --force to overwrite)`,

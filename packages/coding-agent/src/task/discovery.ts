@@ -27,6 +27,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getAgentDir, isRecord, logger, parseFrontmatter } from "@oh-my-pi/pi-utils";
+import type { AdvisorConfig } from "@oh-my-pi/pi-tui/overlays/advisor-config";
 import { isProviderEnabled, isUserSourceEnabled } from "../capability";
 import type { EffectiveExtensionRoots } from "../capability/types";
 import { findAllNearestProjectConfigDirs, getConfigDirs } from "../config";
@@ -55,8 +56,13 @@ const VALID_MEMORY_BACKENDS = ["mnemopi"] as const;
 export interface DiscoveryResult {
 	agents: AgentDefinition[];
 	projectAgentsDir: string | null;
-	/** Non-fatal load errors from entity record parsing (OMA only; empty for stock OMP). */
-	errors: Array<{ filePath: string; error: string }>;
+	/**
+	 * Non-fatal load errors from entity record parsing (OMA only; empty for
+	 * stock OMP). Optional so a plain `{ agents, projectAgentsDir }` literal —
+	 * the shape every pre-OMA caller and test fixture already builds — stays
+	 * a valid DiscoveryResult; readers default to an empty array.
+	 */
+	errors?: Array<{ filePath: string; error: string }>;
 }
 
 interface AgentDirectory {
@@ -132,8 +138,12 @@ function enrichEntityFields(agent: AgentDefinition, frontmatter: Record<string, 
 	if (isRecord(rawMemory)) {
 		const backend = rawMemory.backend;
 		const bank = rawMemory.bank;
-		if (typeof backend === "string" && VALID_MEMORY_BACKENDS.includes(backend as "mnemopi") &&
-			typeof bank === "string" && bank.trim()) {
+		if (
+			typeof backend === "string" &&
+			VALID_MEMORY_BACKENDS.includes(backend as "mnemopi") &&
+			typeof bank === "string" &&
+			bank.trim()
+		) {
 			let autoRetain = false;
 			if (rawMemory.autoRetain !== undefined) {
 				const parsed = parseBoolean(rawMemory.autoRetain);
@@ -172,7 +182,9 @@ function enrichEntityFields(agent: AgentDefinition, frontmatter: Record<string, 
  * Load entity records from the OMA entity registry root.
  * Returns both successfully-parsed agents and non-fatal load errors.
  */
-async function loadEntityAgents(registryRoot: string): Promise<{ agents: AgentDefinition[]; errors: Array<{ filePath: string; error: string }> }> {
+async function loadEntityAgents(
+	registryRoot: string,
+): Promise<{ agents: AgentDefinition[]; errors: Array<{ filePath: string; error: string }> }> {
 	const entitiesDir = path.join(registryRoot, ENTITY_RECORDS_SUBDIR);
 	const entries = await fs.readdir(entitiesDir, { withFileTypes: true }).catch(() => []);
 	const errors: Array<{ filePath: string; error: string }> = [];
