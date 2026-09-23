@@ -1176,7 +1176,7 @@ export class AgentHubOverlayComponent<TRecord extends AgentRecordLike = AgentRec
 		const styledId = selected ? theme.bold(theme.fg("accent", id)) : theme.bold(id);
 		const rowGlyph = entityGlyph(ref);
 		const fields: string[] = [
-			`${cursor} ${statusGlyph(ref.status)} ${rowGlyph ? `${rowGlyph} ` : ""}${branch}${styledId}`,
+			`${cursor} ${branch}${statusGlyph(ref.status)} ${rowGlyph ? `${rowGlyph} ` : ""}${styledId}`,
 		];
 		if (ref.displayName && ref.displayName !== ref.id) {
 			const rowName = sanitizeDisplaySingleLine(ref.displayName);

@@ -63,8 +63,14 @@ try {
 // An imported module — a test/SDK harness, or a sibling bin shim like
 // `oma.ts` importing this file — has a different basename and is correctly
 // not treated as the entry (so it neither auto-runs nor claims the worker host).
+// `PI_COMPILED` remains a supported explicit override on top of the basename
+// check (not a replacement for it): a compiled binary's own build sets it, and
+// a harness that imports this module under a synthetic entry path (an inline
+// `bun -e` eval script, an SDK/test runner) can set it to force process-entry
+// status where no filesystem path exists for the basename compare to match.
 function moduleIsProcessEntry(): boolean {
 	if (import.meta.main) return true;
+	if (process.env.PI_COMPILED === "true") return true;
 	const selfPath = import.meta.path;
 	if (!selfPath) return false;
 	const basename = (p: string): string => {
