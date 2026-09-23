@@ -260,7 +260,10 @@ export class VaultBridge {
 		const k = opts?.k && opts.k > 0 ? Math.floor(opts.k) : DEFAULT_TOP_K;
 		const access = this.#access(opts?.registry);
 		const scope = normalizeSection(opts?.section) ?? access.section;
-		const queryTerms = trimmed.toLowerCase().split(/\s+/).filter(t => t.length > 0);
+		const queryTerms = trimmed
+			.toLowerCase()
+			.split(/\s+/)
+			.filter(t => t.length > 0);
 		const hits = this.#grepSearch(access.root, scope, queryTerms, k);
 		return hits;
 	}
@@ -291,7 +294,7 @@ export class VaultBridge {
 				if (matchCount === 0) continue;
 				// Score: match density capped at 1.0
 				const wordCount = Math.max(1, lower.split(/\s+/).length);
-				const score = Math.min(1, matchCount / Math.max(1, terms.length) * (matchCount / wordCount * 10));
+				const score = Math.min(1, (matchCount / Math.max(1, terms.length)) * ((matchCount / wordCount) * 10));
 				results.push({
 					key: block.key,
 					file: relPath,
@@ -324,7 +327,12 @@ export class VaultBridge {
 				const relChild = relDir ? `${relDir}/${entry.name}` : entry.name;
 				if (entry.isDirectory()) {
 					// Only recurse if within scope or no scope restriction
-					if (!scopePrefix || relChild === scope || relChild.startsWith(scopePrefix) || (scope !== undefined && scope.startsWith(relChild))) {
+					if (
+						!scopePrefix ||
+						relChild === scope ||
+						relChild.startsWith(scopePrefix) ||
+						(scope !== undefined && scope.startsWith(relChild))
+					) {
 						walk(absChild, relChild);
 					}
 				} else if (entry.isFile() && entry.name.endsWith(".md")) {
@@ -503,10 +511,7 @@ export class VaultBridge {
 	}
 
 	/** Resolve outgoing links for a note, preferring same-folder matches. */
-	#resolveLinksOut(
-		notePath: string,
-		index: LinkIndex,
-	): { target: string; resolved?: string; heading?: string }[] {
+	#resolveLinksOut(notePath: string, index: LinkIndex): { target: string; resolved?: string; heading?: string }[] {
 		const links = index.forward.get(notePath) ?? [];
 		const noteDir = path.dirname(notePath);
 		const knownFiles = new Set(index.allFiles.map(f => f.toLowerCase()));

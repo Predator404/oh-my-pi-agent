@@ -230,7 +230,7 @@ describe("@-import resolution at read time (acceptance §12.6)", () => {
 			baseDir: stubDir,
 			source: "native:project",
 		};
-		const built = await buildSkillPromptMessage(skill, "", "autoload");
+		const built = await buildSkillPromptMessage(skill, { args: "" }, "autoload");
 		expect(built.message).toContain(NOTE_MARKER);
 		expect(built.message).not.toContain(`@${notePath}`);
 		// lineCount reflects the EXPANDED (injected) body, not the 1-line stub.
@@ -252,7 +252,7 @@ describe("@-import resolution at read time (acceptance §12.6)", () => {
 				baseDir: path.dirname(skillPath),
 				source: "native:project",
 			};
-			const built = await buildSkillPromptMessage(skill, "", "autoload");
+			const built = await buildSkillPromptMessage(skill, { args: "" }, "autoload");
 			expect(built.message).toContain(NOTE_MARKER);
 			expect(built.message).not.toContain("@~/vault");
 			expect(built.details.lineCount).toBeGreaterThan(1);
@@ -302,7 +302,7 @@ describe("skills.ts @-import gate — security (P2): opt-in + containRoot", () =
 			baseDir: stubDir,
 			source: "native:project",
 		};
-		const built = await buildSkillPromptMessage(skill, "", "autoload");
+		const built = await buildSkillPromptMessage(skill, { args: "" }, "autoload");
 		expect(built.message).toContain(`@${notePath}`);
 		expect(built.message).not.toContain(NOTE_MARKER);
 	});
@@ -334,7 +334,7 @@ describe("skills.ts @-import gate — security (P2): opt-in + containRoot", () =
 			source: "agent-plugins:project",
 			containRoot: pluginRoot,
 		};
-		const built = await buildSkillPromptMessage(skill, "", "autoload");
+		const built = await buildSkillPromptMessage(skill, { args: "" }, "autoload");
 		// Escaping import: left verbatim, secret NOT inlined.
 		expect(built.message).toContain("@../../outside/secret.md");
 		expect(built.message).not.toContain("SECRET");

@@ -3,10 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { parseFrontmatter } from "@oh-my-pi/pi-utils";
-import {
-	EntityNotFoundError,
-	EntityValidationError,
-} from "@oh-my-pi/pi-coding-agent/entity";
+import { EntityNotFoundError, EntityValidationError } from "@oh-my-pi/pi-coding-agent/entity";
 import { resolveEntityByName, resolveEntityConfig, EntityConfigError } from "@oh-my-pi/pi-coding-agent/entity/resolve";
 import { discoverAgents } from "@oh-my-pi/pi-coding-agent/task/discovery";
 import type { AgentDefinition, ResolvedEntityConfig } from "@oh-my-pi/pi-coding-agent/task/types";
@@ -18,7 +15,7 @@ import type { AgentDefinition, ResolvedEntityConfig } from "@oh-my-pi/pi-coding-
 function parseAndResolveEntity(content: string, source: AgentDefinition["source"] = "user"): ResolvedEntityConfig {
 	const { frontmatter, body } = parseFrontmatter(content);
 	const name = typeof frontmatter.name === "string" ? frontmatter.name.trim() : "";
-	if (!name) throw new EntityValidationError("Entity field \"name\" must be a non-empty string", "<test>");
+	if (!name) throw new EntityValidationError('Entity field "name" must be a non-empty string', "<test>");
 
 	const agent: AgentDefinition = {
 		name,
@@ -26,14 +23,17 @@ function parseAndResolveEntity(content: string, source: AgentDefinition["source"
 		systemPrompt: body.trim(),
 		source,
 		role: frontmatter.role as "agent" | "persona" | undefined,
-		model: Array.isArray(frontmatter.model) ? frontmatter.model as string[] : undefined,
-		tools: Array.isArray(frontmatter.tools) ? frontmatter.tools as string[] : undefined,
-		thinkingLevel: typeof frontmatter.thinkingLevel === "string" ? frontmatter.thinkingLevel as AgentDefinition["thinkingLevel"] : undefined,
-		autoloadSkills: Array.isArray(frontmatter.autoloadSkills) ? frontmatter.autoloadSkills as string[] : undefined,
+		model: Array.isArray(frontmatter.model) ? (frontmatter.model as string[]) : undefined,
+		tools: Array.isArray(frontmatter.tools) ? (frontmatter.tools as string[]) : undefined,
+		thinkingLevel:
+			typeof frontmatter.thinkingLevel === "string"
+				? (frontmatter.thinkingLevel as AgentDefinition["thinkingLevel"])
+				: undefined,
+		autoloadSkills: Array.isArray(frontmatter.autoloadSkills) ? (frontmatter.autoloadSkills as string[]) : undefined,
 		memory: frontmatter.memory as AgentDefinition["memory"],
 		vaultSection: typeof frontmatter.vaultSection === "string" ? frontmatter.vaultSection : undefined,
 		icon: typeof frontmatter.icon === "string" ? frontmatter.icon : undefined,
-		color: typeof frontmatter.color === "string" ? frontmatter.color as AgentDefinition["color"] : undefined,
+		color: typeof frontmatter.color === "string" ? (frontmatter.color as AgentDefinition["color"]) : undefined,
 		watchdog: frontmatter.watchdog as AgentDefinition["watchdog"],
 		hosting: frontmatter.hosting as AgentDefinition["hosting"],
 	};
@@ -259,9 +259,22 @@ describe("entity registry — record → session config resolution (C1 → WS1)"
 		expect(String(config.thinkingLevel)).toBe("high");
 		expect(config.autoloadSkills).toEqual(["writing-for-agents"]);
 		const populated: Array<keyof typeof config> = [
-			"name", "description", "role", "icon", "color", "model",
-			"thinkingLevel", "systemPrompt", "tools", "autoloadSkills",
-			"memory", "vaultSection", "watchdog", "hosting", "cwd", "source",
+			"name",
+			"description",
+			"role",
+			"icon",
+			"color",
+			"model",
+			"thinkingLevel",
+			"systemPrompt",
+			"tools",
+			"autoloadSkills",
+			"memory",
+			"vaultSection",
+			"watchdog",
+			"hosting",
+			"cwd",
+			"source",
 		];
 		for (const field of populated) {
 			expect(config[field], `resolved config.${String(field)} must be populated`).toBeDefined();

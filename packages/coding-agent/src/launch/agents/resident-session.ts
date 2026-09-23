@@ -13,7 +13,7 @@
  */
 
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
-import type { IrcMessage } from "../../irc/bus";
+import type { IrcMessage } from "@oh-my-pi/pi-tui/tools/hub";
 import type { AgentSession } from "../../session/agent-session";
 import type { CustomEntryLike, GoalCheckpointData, JobOutcomeData } from "./artifacts";
 import { GOAL_CHECKPOINT_CUSTOM_TYPE, JOB_OUTCOME_CUSTOM_TYPE } from "./artifacts";

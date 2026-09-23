@@ -21,7 +21,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { MCPServerConfig } from "../mcp/types";
-import { getEntityRegistryRoot, loadRegistryManifest, type RegistryAccess, type RegistryManifest, resolveRegistryAccess } from "./registries";
+import {
+	getEntityRegistryRoot,
+	loadRegistryManifest,
+	type RegistryAccess,
+	type RegistryManifest,
+	resolveRegistryAccess,
+} from "./registries";
 import type { ResolvedEntityConfig } from "../task/types";
 
 // ── Inlined from vault-mcp/register.ts (deleted) ──
