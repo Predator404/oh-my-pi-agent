@@ -113,7 +113,7 @@ describe("peerReceiptStatus (receipt semantics)", () => {
 
 interface StubSessionCalls {
 	followUp: string[];
-	irc: Array<{ body: string; from: string; expectsReply: boolean | undefined }>;
+	irc: Array<{ body: string; from: string }>;
 }
 
 function makeStubResident(streaming: { value: boolean }): { resident: ResidentSession; calls: StubSessionCalls } {
@@ -122,11 +122,8 @@ function makeStubResident(streaming: { value: boolean }): { resident: ResidentSe
 		get isStreaming(): boolean {
 			return streaming.value;
 		},
-		async deliverIrcMessage(
-			msg: { from: string; body: string },
-			opts?: { expectsReply?: boolean },
-		): Promise<"injected" | "woken"> {
-			calls.irc.push({ body: msg.body, from: msg.from, expectsReply: opts?.expectsReply });
+		async deliverIrcMessage(msg: { from: string; body: string }): Promise<"injected" | "woken"> {
+			calls.irc.push({ body: msg.body, from: msg.from });
 			return streaming.value ? "injected" : "woken";
 		},
 		async followUp(text: string): Promise<void> {
@@ -150,14 +147,14 @@ describe("AgentSessionResidentSession.deliverMessage (mode-aware dispatch)", () 
 		const { resident, calls } = makeStubResident({ value: true });
 		const outcome = await resident.deliverMessage("phi", "fyi", "auto");
 		expect(outcome).toBe("injected");
-		expect(calls.irc).toEqual([{ body: "fyi", from: "phi", expectsReply: false }]);
+		expect(calls.irc).toEqual([{ body: "fyi", from: "phi" }]);
 	});
 
 	test("steer into a busy session interrupts via IRC expecting a reply -> injected", async () => {
 		const { resident, calls } = makeStubResident({ value: true });
 		const outcome = await resident.deliverMessage("phi", "stop and do X", "steer");
 		expect(outcome).toBe("injected");
-		expect(calls.irc).toEqual([{ body: "stop and do X", from: "phi", expectsReply: true }]);
+		expect(calls.irc).toEqual([{ body: "stop and do X", from: "phi" }]);
 	});
 
 	test("any mode into an idle session wakes a fresh turn -> woken", async () => {

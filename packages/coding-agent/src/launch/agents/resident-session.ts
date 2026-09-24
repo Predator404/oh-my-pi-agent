@@ -13,7 +13,7 @@
  */
 
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
-import type { IrcMessage } from "@oh-my-pi/pi-tui/tools/hub";
+import type { IrcMessage } from "@oh-my-pi/pi-tui/tools/irc";
 import type { AgentSession } from "../../session/agent-session";
 import type { CustomEntryLike, GoalCheckpointData, JobOutcomeData } from "./artifacts";
 import { GOAL_CHECKPOINT_CUSTOM_TYPE, JOB_OUTCOME_CUSTOM_TYPE } from "./artifacts";
@@ -118,7 +118,7 @@ export class AgentSessionResidentSession implements ResidentSession {
 			body: text,
 			ts: Date.now(),
 		};
-		return this.session.deliverIrcMessage(message, { expectsReply: plan.expectsReply });
+		return this.session.deliverIrcMessage(message);
 	}
 
 	getMessages(): AgentMessage[] {
