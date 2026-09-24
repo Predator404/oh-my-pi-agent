@@ -855,7 +855,7 @@ describe("async speculative compaction", () => {
 		// the summarized prefix), so any user/tool turn appended AFTER the snapshot
 		// leaf but BEFORE apply is silently dropped — the newest user message never
 		// reaches provider input.
-		authStorage.setRuntimeApiKey("openai", "test-key-openai");
+		authStorage.keys.setRuntime("openai", "test-key-openai");
 		// The active model must be able to replay a remote payload for the armed
 		// result to stay valid across the branch advance (remotePreserveReusable).
 		const remoteModel: Model = { ...model, provider: "openai" };
