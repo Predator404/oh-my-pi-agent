@@ -35,6 +35,8 @@ const ACTIONS = [
 	"transcript",
 	"logs",
 	"daemon",
+	"vault-sync",
+	"sync-vault",
 ] as const;
 
 export default class Entity extends Command {
@@ -87,8 +89,9 @@ export default class Entity extends Command {
 		"warm-cache": Flags.boolean({
 			description: "setup: prefetch the vault embedder (one network step; offline after)",
 		}),
+		"dry-run": Flags.boolean({ description: "vault-sync: simulate sync without writing changes" }),
+		"no-embeddings": Flags.boolean({ description: "vault-sync: skip generating embeddings" }),
 	};
-
 	static examples = [
 		"# Scaffold a new persona (prompt piped on stdin)\n  echo 'You are ...' | omp entity create sage --role persona --description 'Domain expert'",
 		"# Edit config without hand-editing YAML\n  omp entity config sage --set model=anthropic/opus --set thinking=high",
@@ -142,6 +145,8 @@ export default class Entity extends Command {
 				registrySource: flags["registry-source"],
 				noEndpoints: flags["no-endpoints"],
 				warmCache: flags["warm-cache"],
+				dryRun: flags["dry-run"],
+				noEmbeddings: flags["no-embeddings"],
 			},
 		};
 

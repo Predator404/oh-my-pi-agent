@@ -3,6 +3,8 @@
 ## [Unreleased]
 ### Added
 
+- Added bidirectional synchronization between Obsidian Markdown vaults and Mnemopi SQLite vector store (`syncVaultMnemopi`, `sync_vault` MCP tool, and `omp entity vault-sync` / `oma entity vault sync`), allowing vault notes to be chunked and embedded in Mnemopi and retained session lessons to be exported as clean Obsidian Markdown notes in `personas/phi/learned/`.
+- Fixed `BankPolicyRegistry` to respect explicit `registryRoot` options during agent discovery for memory policy evaluation.
 - Added multi-registry entity domains: each entity belongs to an isolated *registry* (its own vault root, records, and memory-bank namespace) resolved from a `~/.omp/agent/registries.json` manifest. A private registry may read public registries and explicitly-granted private ones, but never the reverse — keeping confidential knowledge out of public vaults.
 - Typing `@@` at the start of a prompt now opens an entity (persona/agent) picker over the OMA registry and inserts a `@@<name>: ` address; `@@@` falls back to the file picker with a single `@` populated, and a single `@` still opens the file picker. The picker only triggers at message start, matching where a `@@<name>:` address routes.
 - Directly addressing an entity (`@@<name>: ...`) that has no live advisor now attaches it from the entity registry as an advisor — preserving the entity's configured thinking level — and starts the advisor subsystem if it was off.

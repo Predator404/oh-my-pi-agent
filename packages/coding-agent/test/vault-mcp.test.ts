@@ -172,11 +172,11 @@ describe("no cloud calls", () => {
 
 // --- Tool surface + JSON-RPC ------------------------------------------------
 describe("C3 tool surface", () => {
-	it("exposes exactly the four C3 tools", () => {
+	it("exposes the C3 tools", () => {
 		const names = getToolDefinitions()
 			.map(t => t.name)
 			.sort();
-		expect(names).toEqual(["get_connections", "get_note", "search_notes", "write_note"]);
+		expect(names).toEqual(["get_connections", "get_note", "search_notes", "sync_vault", "write_note"]);
 	});
 
 	it("dispatches search_notes via handleToolCall", async () => {
@@ -196,7 +196,7 @@ describe("C3 tool surface", () => {
 		const listResult = list?.result;
 		const tools =
 			listResult && typeof listResult === "object" && "tools" in listResult ? listResult.tools : undefined;
-		expect(Array.isArray(tools) && tools.length).toBe(4);
+		expect(Array.isArray(tools) && tools.length).toBe(5);
 	});
 
 	it("ignores notifications (no reply)", async () => {

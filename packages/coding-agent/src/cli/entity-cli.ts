@@ -46,6 +46,8 @@ import type {
 	AgentSessionSummary,
 } from "../launch/agents/control-protocol";
 import { formatSessionHistoryMarkdown } from "../session/session-history-format";
+import { resolveVaultRoot, syncVaultMnemopi } from "../vault-mcp";
+
 
 /**
  * The subset of {@link AgentDaemonClient} the operator surface drives. Every C4
@@ -141,8 +143,9 @@ export interface EntityCommandFlags {
 	registrySource?: string;
 	noEndpoints?: boolean;
 	warmCache?: boolean;
+	dryRun?: boolean;
+	noEmbeddings?: boolean;
 }
-
 export interface EntityCommand {
 	action: string;
 	args: string[];
@@ -393,6 +396,27 @@ export async function runEntityCommand(cmd: EntityCommand, deps: EntityCommandDe
 			deps.write(`Vault:         ${report.vaultLink} → ${report.vaultLocation}\n`);
 			for (const step of report.steps) deps.write(`  [${step.status}] ${step.id}: ${step.detail}\n`);
 			deps.write(report.ok ? "Setup OK.\n" : "Setup completed WITH CONFLICTS (see above).\n");
+			return;
+		}
+		case "vault-sync":
+		case "sync-vault": {
+			const vaultRoot = flags.vault ?? resolveVaultRoot();
+			const bank = flags.bank ?? "phi";
+			const result = await syncVaultMnemopi({
+				vaultRoot,
+				bank,
+				noEmbeddings: flags.noEmbeddings ?? false,
+				dryRun: flags.dryRun ?? false,
+			});
+			if (json) return emit(deps, true, result, "");
+			deps.write(`Vault Sync (${result.vaultRoot} <-> bank:${result.bank}):\n`);
+			deps.write(`  Imported to Mnemopi: ${result.imported} chunks\n`);
+			deps.write(`  Exported to Vault:   ${result.exported} notes\n`);
+			if (result.skipped > 0) deps.write(`  Unchanged in Vault:  ${result.skipped} notes\n`);
+			if (result.errors.length > 0) {
+				deps.write(`  Errors (${result.errors.length}):\n`);
+				for (const err of result.errors) deps.write(`    - ${err}\n`);
+			}
 			return;
 		}
 		case "transcript":

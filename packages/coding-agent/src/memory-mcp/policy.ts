@@ -59,11 +59,27 @@ export class BankPolicyRegistry {
 
 	/** (Re)load the bank→policy map from the entity registry. */
 	async load(): Promise<void> {
-		// discoverAgents needs a cwd; policy resolution is project-agnostic so use the
-		// configured registry root or fall back to cwd.
 		const registryRoot = this.#options.registryRoot;
 		const cwd = registryRoot ?? process.cwd();
-		const { agents, errors } = await discoverAgents(cwd);
+		const prevRegistry = process.env.OMP_ENTITY_REGISTRY;
+		if (registryRoot) {
+			process.env.OMP_ENTITY_REGISTRY = registryRoot;
+		}
+		let agents: AgentDefinition[] = [];
+		let errors: Array<{ filePath: string; error: string }> = [];
+		try {
+			const discovered = await discoverAgents(cwd);
+			agents = discovered.agents;
+			errors = discovered.errors ?? [];
+		} finally {
+			if (registryRoot) {
+				if (prevRegistry !== undefined) {
+					process.env.OMP_ENTITY_REGISTRY = prevRegistry;
+				} else {
+					delete process.env.OMP_ENTITY_REGISTRY;
+				}
+			}
+		}
 		const entityAgents = agents.filter(a => a.role);
 		this.#byBank.clear();
 		this.#loadErrors = errors ?? [];

@@ -11,6 +11,8 @@
  * one code path.
  */
 import type { VaultBridge } from "./vault";
+import { syncVaultMnemopi } from "./sync";
+
 
 export type ToolArguments = Record<string, unknown>;
 export type ToolResult = Record<string, unknown>;
@@ -73,6 +75,14 @@ export const GET_CONNECTIONS_SCHEMA = {
 	},
 	required: ["path"],
 } as const;
+export const SYNC_VAULT_SCHEMA = {
+	type: "object",
+	properties: {
+		bank: { type: "string", description: "Target Mnemopi bank name; defaults to phi." },
+		dryRun: { type: "boolean", description: "Simulate synchronization without persisting changes." },
+	},
+} as const;
+
 
 const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 	{
@@ -95,6 +105,12 @@ const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 		name: "get_connections",
 		description: "Traverse a note's Obsidian wikilink/backlink graph (plus its nearest vector neighbors).",
 		inputSchema: GET_CONNECTIONS_SCHEMA,
+	},
+	{
+		name: "sync_vault",
+		description:
+			"Bidirectional synchronization between the Obsidian Markdown vault and Mnemopi SQLite vector store.",
+		inputSchema: SYNC_VAULT_SCHEMA,
 	},
 ];
 
@@ -136,6 +152,16 @@ export async function handleToolCall(bridge: VaultBridge, name: string, args: To
 				linksIn: conn.linksIn,
 				relatedByVector: conn.relatedByVector,
 			};
+		}
+		case "sync_vault": {
+			const bank = optionalString(args, "bank");
+			const dryRun = typeof args.dryRun === "boolean" ? args.dryRun : false;
+			const result = await syncVaultMnemopi({
+				vaultRoot: bridge.vaultRoot,
+				bank,
+				dryRun,
+			});
+			return { ...result };
 		}
 		default:
 			throw new Error(`Unknown tool: ${name}`);
