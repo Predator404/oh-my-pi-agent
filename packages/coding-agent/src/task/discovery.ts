@@ -59,7 +59,7 @@ export interface DiscoveryResult {
 	/** Agent directories searched, in precedence order (for "unknown agent" diagnostics). */
 	searchedDirs?: string[];
 	/** Non-fatal load errors from entity record parsing (OMA only; empty for stock OMP). */
-	errors: Array<{ filePath: string; error: string }>;
+	errors?: Array<{ filePath: string; error: string }>;
 }
 
 interface AgentDirectory {

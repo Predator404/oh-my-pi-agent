@@ -221,6 +221,10 @@ export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 		// at message start, matching `parseAdvisorAddress`, which routes an address
 		// only when it leads the message. A mid-message `@@` falls through to files.
 		const entityMention = extractEntityMention(textBeforeCursor);
+		// `@@` opens the entity picker only when the prompt is otherwise empty:
+		// no prompt text on lines above the cursor, and only whitespace before the
+		// mention on the current line.
+		const hasPromptTextBeforeCursorLine = lines.some((line, index) => index < cursorLine && line.trim() !== "");
 		const atMessageStart =
 			entityMention !== null &&
 			!hasPromptTextBeforeCursorLine &&

@@ -36,8 +36,4 @@ export {
 	VaultBridge,
 	type VaultBridgeOptions,
 } from "./vault";
-export {
-	syncVaultMnemopi,
-	type VaultSyncOptions,
-	type VaultSyncResult,
-} from "./sync";
+export { syncVaultMnemopi, type VaultSyncOptions, type VaultSyncResult } from "./sync";

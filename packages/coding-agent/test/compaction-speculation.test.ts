@@ -1132,7 +1132,7 @@ describe("async speculative compaction", () => {
 		const postSnapshotText = "post-snapshot user message #9351";
 		sessionManager.appendMessage(userMessage(postSnapshotText));
 
-		await maintenance.runAutoCompaction("threshold", false, false, false, { triggerContextTokens: THRESHOLD });
+		await maintenance.runAutoCompaction("threshold", false, { triggerContextTokens: THRESHOLD });
 
 		// The armed result was spliced in, not re-summarized by a blocking pass.
 		expect(compactSpy).toHaveBeenCalledTimes(1);

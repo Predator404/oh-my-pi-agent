@@ -49,9 +49,9 @@ const IGNORED_DIR_NAMES: Record<string, true> = {
 	".git": true,
 	".obsidian": true,
 	".mnemopi": true,
-	"node_modules": true,
-	"Templates": true,
-	"templates": true,
+	node_modules: true,
+	Templates: true,
+	templates: true,
 	".trash": true,
 };
 
@@ -158,7 +158,11 @@ function parseVaultBlocks(content: string, relPath: string): VaultBlock[] {
 
 /** Derive a concise note title from memory content or ID. */
 function deriveMemoryTitle(content: string, id: string): string {
-	const firstLine = content.trim().split("\n", 1)[0].replace(/^[#*-]\s*/, "").trim();
+	const firstLine = content
+		.trim()
+		.split("\n", 1)[0]
+		.replace(/^[#*-]\s*/, "")
+		.trim();
 	if (firstLine.length > 0 && firstLine.length <= 80) {
 		return firstLine;
 	}
@@ -229,9 +233,8 @@ export async function syncVaultMnemopi(options: VaultSyncOptions): Promise<Vault
 		const mdFiles = collectVaultMarkdownFiles(vaultRoot);
 		const seenVaultSources = new Set<string>();
 
-		const exportPrefix = exportSubdir.endsWith(path.sep) || exportSubdir.endsWith("/")
-			? exportSubdir
-			: `${exportSubdir}/`;
+		const exportPrefix =
+			exportSubdir.endsWith(path.sep) || exportSubdir.endsWith("/") ? exportSubdir : `${exportSubdir}/`;
 		for (const relPath of mdFiles) {
 			// Skip files in the exportDir to avoid export-import feedback loops
 			if (relPath === exportSubdir || relPath.startsWith(exportPrefix)) continue;

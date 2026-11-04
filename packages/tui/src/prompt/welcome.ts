@@ -236,8 +236,8 @@ export class WelcomeComponent implements Component {
 
 	constructor(
 		private version: string,
-		private modelName: string,
-		private providerName: string,
+		private modelName = "",
+		private providerName = "",
 		private recentSessions: RecentSession[] = [],
 		private lspServers: LspServerInfo[] = [],
 	) {}

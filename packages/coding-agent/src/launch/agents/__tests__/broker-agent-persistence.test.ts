@@ -321,7 +321,7 @@ describe("broker resident-agent persistence (SPEC §1.1)", () => {
 		await fs.writeFile(path.join(runtimeDir, "broker.token"), token, { mode: 0o600 });
 
 		const { spawner, state } = makeFakeSpawner();
-		const broker = new DaemonBroker(projectDir, runtimeDir, token, idleGraceMs, restartBackoffBaseMs, spawner);
+		const broker = new DaemonBroker(projectDir, runtimeDir, token, idleGraceMs, restartBackoffBaseMs, 5_000, spawner);
 
 		let brokerResolved = false;
 		// run() resolves only when the broker fully shuts down. Keep the promise;
@@ -335,7 +335,7 @@ describe("broker resident-agent persistence (SPEC §1.1)", () => {
 				brokerResolved = true;
 			});
 
-		const endpoint = daemonBrokerEndpoint(projectDir, runtimeDir);
+		const endpoint = daemonBrokerEndpoint(runtimeDir);
 		let rawA: DaemonBrokerClient | undefined;
 		let rawB: DaemonBrokerClient | undefined;
 		try {

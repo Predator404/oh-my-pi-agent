@@ -13,7 +13,6 @@
 import type { VaultBridge } from "./vault";
 import { syncVaultMnemopi } from "./sync";
 
-
 export type ToolArguments = Record<string, unknown>;
 export type ToolResult = Record<string, unknown>;
 
@@ -83,7 +82,6 @@ export const SYNC_VAULT_SCHEMA = {
 	},
 } as const;
 
-
 const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 	{
 		name: "search_notes",
@@ -108,8 +106,7 @@ const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
 	},
 	{
 		name: "sync_vault",
-		description:
-			"Bidirectional synchronization between the Obsidian Markdown vault and Mnemopi SQLite vector store.",
+		description: "Bidirectional synchronization between the Obsidian Markdown vault and Mnemopi SQLite vector store.",
 		inputSchema: SYNC_VAULT_SCHEMA,
 	},
 ];

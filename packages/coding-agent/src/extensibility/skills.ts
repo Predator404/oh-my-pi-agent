@@ -848,9 +848,7 @@ export type SkillPromptInput = Pick<ParsedSkillInvocation, "args"> & Partial<Pic
 export const SKILL_RESOLVE_IMPORTS_FIELD = "resolveImports";
 
 /** Read a skill's instruction body before rendering user-provided arguments. */
-export async function loadSkillPromptBody(
-	skill: Pick<Skill, "filePath" | "containRoot">,
-): Promise<string> {
+export async function loadSkillPromptBody(skill: Pick<Skill, "filePath" | "containRoot">): Promise<string> {
 	const content = await Bun.file(skill.filePath).text();
 	// Only the body is used: keep HTML comments (`repair: false`) and leave YAML
 	// diagnostics to the loader, which already parsed this frontmatter.

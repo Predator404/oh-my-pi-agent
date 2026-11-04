@@ -48,7 +48,6 @@ import type {
 import { formatSessionHistoryMarkdown } from "../session/session-history-format";
 import { resolveVaultRoot, syncVaultMnemopi } from "../vault-mcp";
 
-
 /**
  * The subset of {@link AgentDaemonClient} the operator surface drives. Every C4
  * command is reachable through it. Declared as an interface (not the class) so a
