@@ -29,8 +29,10 @@ import {
 
 import { declareWorkerHostEntry, installWorkerInbox, isWorkerHostSelector } from "@oh-my-pi/pi-utils/worker-host";
 import { installSqliteLockShim } from "@oh-my-pi/pi-natives/sqlite-locks";
+import { isNativeShell, runNativeShell } from "./cli/native-shell";
 import { extractProfileFlags } from "./cli/profile-bootstrap";
 import {
+	AUTO_UPDATE_WORKER_ARG,
 	BLOB_BROKER_WORKER_ARG,
 	COMPUTER_WORKER_ARG,
 	DAEMON_BROKER_WORKER_ARG,
@@ -363,6 +365,14 @@ async function runWorkerEntrypoint(arg: string | undefined): Promise<boolean> {
 		await startTextPredictDaemonFromEnvironment();
 		return true;
 	}
+	if (arg === AUTO_UPDATE_WORKER_ARG) {
+		// Selector boundary keeps the updater graph out of ordinary startup. The worker
+		// downloads releases, so it needs the PI_PROXY handling ordinary commands get.
+		await installNetworkBootstrap();
+		const { runAutoUpdateWorker } = await import("./cli/auto-update");
+		await runAutoUpdateWorker();
+		return true;
+	}
 	return false;
 }
 
@@ -489,6 +499,12 @@ export async function runCli(
 	const processEntry = options?.isProcessEntry ?? isProcessEntry;
 	const binName = options?.appName ?? APP_NAME;
 	const binVersion = options?.version ?? VERSION;
+	// `omp zsh|bash|sh [args...]`: the whole argv belongs to the shell (`--help`,
+	// `--profile`, `-c` included), so it dispatches before profile bootstrap,
+	// prepaint, network setup and the command table.
+	if (isNativeShell(argv[0])) {
+		await runNativeShell(argv);
+	}
 	let resolvedArgv = argv;
 	try {
 		const extracted = extractProfileFlags(resolvedArgv);
